@@ -6,7 +6,7 @@
 # License, or (at your option) any later version.  Distributed WITHOUT
 # ANY WARRANTY; see <https://www.gnu.org/licenses/agpl-3.0.html>.
 
-# DO NOT EDIT - Generated from basilisk.sexp
+# DO NOT EDIT - Generated from basalt.sexp
 # Regenerate with: (skewed-generate-all-configs)
 
 networks:
@@ -16,8 +16,8 @@ networks:
     enable_ipv6: true
     ipam:
       config:
-        - subnet: "172.20.0.0/16"
-        - subnet: "fd00:cafe::/80"
+        - subnet: "172.21.0.0/16"
+        - subnet: "fd00:ba5a::/80"
 
 services:
 

@@ -1,4 +1,4 @@
-;;; services-generated.el --- Generated from basilisk.sexp -*- lexical-binding: t; -*-
+;;; services-generated.el --- Generated from basalt.sexp -*- lexical-binding: t; -*-
 
 ;; Copyright © 2026 Gornskew Enterprises
 ;;
@@ -44,7 +44,7 @@
      :type "utility"
     )
    ))
-;; Services configuration generated from basilisk.sexp.
+;; Services configuration generated from basalt.sexp.
 
 (provide 'services-generated)
 ;;; services-generated.el ends here
