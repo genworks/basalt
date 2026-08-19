@@ -3,13 +3,13 @@
 This repository is the **build system**: everything needed to
 configure, generate, and run a Basalt deployment. What Basalt *is* —
 the architecture and the services — is described in
-[BASALT.md](BASALT.md). This document is the fabrication and
-operating manual: starting the stack, stopping it, and connecting
-your people and your agents.
+[BASALT.md](BASALT.md). This document is the operating manual:
+starting the stack, stopping it, and connecting your people and your
+agents.
 
 Basalt is the Genworks-maintained fork of
 [Basilisk](https://github.com/gornskew/basilisk), rewritten in plain
-infrastructure vocabulary. The two share machinery and images; they
+infrastructure vocabulary. The two share underlying content; they
 differ in register. Upstream documentation, file history, and some
 runtime output speak Basilisk's own idiom — fork users should expect
 to meet it.

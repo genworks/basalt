@@ -34,7 +34,19 @@
   :container     :aboard
   :host          :galaxy
   :image-variant :strain
-  :image         :species)
+  :image         :species
+  ;; The role system.  Substitution is position-blind, so these carry
+  ;; role NAMES (value position) as well as the table keys.  A term
+  ;; must therefore never be reused elsewhere in basalt.sexp with a
+  ;; different meaning.
+  :roles         :postings
+  :role          :post
+  :console       :captain
+  :front-line    :1st-officer
+  :engineering   :ships-engineer
+  :ingress       :transporter-chief
+  :dashboard     :communications-officer
+  :monitor       :medic)
 
  :vocabulary
  (:stowaway-designator "unassigned"
