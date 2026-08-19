@@ -12,11 +12,6 @@ by the build tooling, produces a standard Basalt deployment. The
 operating manual — starting, stopping, connecting — is
 [README.md](README.md).
 
-Basalt is the Genworks-maintained fork of Basilisk, and this document
-is a register-for-register translation of upstream's
-[BASILISK.md](https://github.com/gornskew/basilisk/blob/devo/BASILISK.md):
-same architecture, plain vocabulary.
-
 
 ## The repositories
 

@@ -8,11 +8,7 @@ starting the stack, stopping it, and connecting your people and your
 agents.
 
 Basalt is the Genworks-maintained fork of
-[Basilisk](https://github.com/gornskew/basilisk), rewritten in plain
-infrastructure vocabulary. The two share underlying content; they
-differ in register. Upstream documentation, file history, and some
-runtime output speak Basilisk's own idiom — fork users should expect
-to meet it.
+[Basilisk](https://github.com/gornskew/basilisk).
 
 A standard deployment runs an interactive **console** (Emacs, with
 MCP and HTTP endpoints), two **engine services** (Gendl on CCL and on
@@ -164,10 +160,9 @@ ready-made first message.
 ## The configuration, and the generated files
 
 The deployment's configuration is `basalt.sexp` — the one file
-written by hand, in plain infrastructure vocabulary. The dictionary
-`glossary.sexp` beside it maps this vocabulary onto the keys the
-upstream generator reads natively; editing either requires no change
-to any shipped code. The generator reads the configuration file named
+written by hand. Its companion `glossary.sexp` defines the
+configuration vocabulary and the display strings; editing either
+requires no change to any shipped code. The generator reads the configuration file named
 for its own directory and **no other** — configuration written for a
 differently-named build system is not read, and the error names both
 files.
@@ -190,7 +185,7 @@ Generated outputs include, among others:
 | `mcp/mcp*.json`, `mcp/mcp.toml` | MCP client registries |
 | `generated/services-generated.el` | the console's copy of the service inventory |
 | `generated/crew.env` | the **service ledger**: each role, and the service filling it |
-| `generated/vocabulary.env` | this register's display strings, read at startup |
+| `generated/vocabulary.env` | display strings for startup and status output |
 
 The generated files are outputs. Never edit them directly; edit the
 configuration and regenerate.
