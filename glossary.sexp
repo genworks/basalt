@@ -42,11 +42,11 @@
   :roles         :postings
   :role          :post
   :console       :captain
-  :front-line    :1st-officer
-  :engineering   :ships-engineer
+  :front-line    :first-officer
+  :engineering   :engineer
   :ingress       :transporter-chief
   :dashboard     :communications-officer
-  :monitor       :medic)
+  :monitor       :doctor)
 
  :vocabulary
  (:stowaway-designator "unassigned"

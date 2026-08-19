@@ -104,18 +104,13 @@
   ;; assigned role -- entered on the roster as unassigned -- as
   ;; unassigned-<repo>, the prefix making one obvious from its name
   ;; alone.  :role is only needed when capabilities are expected of
-  ;; the service.  Explicit names below where an upstream-continuous
-  ;; name earns its keep.
+  ;; the service.  No entry below states a :name: every service
+  ;; answers to the hostname derived from its role.
   (:role :console
    :description "The interactive control console, and the longest-lived process in the stack."
    :type "emacs-lisp"
    :mcp t
    :image "gornskew/${EMACS_IMAGE_BASE:-skewed-emacs}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}"
-   ;; The console's canonical hostname is fixed upstream: every
-   ;; in-stack URL, MCP registry, and helper script resolves the
-   ;; console as "captain", so the authored name keeps that
-   ;; continuity rather than taking the derived "console".
-   :name "captain"
    :ports ((:name "http" :container 7080)
            (:name "webterm" :container 6942 :host ${TTYD_HOST_PORT:-6942}))
    :environment (("WEBTERM" . "${WEBTERM:-ttyd}")
@@ -160,12 +155,8 @@
   ;; users.  The usual fit is the gendl ccl variant (the engineering
   ;; service below being gendl sbcl); the :image pin is what
   ;; GUARANTEES it -- the role states the duty, the image states the
-  ;; software.  It keeps its historical upstream name: rules and
-  ;; templated configs address ROLES through the service ledger
-  ;; (generated/crew.env), so the name can catch up in a later
-  ;; recreate without anything else moving.
-  (:name "jr-eng-human"
-   :role :front-line
+  ;; software.
+  (:role :front-line
    :description "Front-line interactive service: assists the console and its users."
    :type "common-lisp"
    :image "gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-ccl"
@@ -183,10 +174,8 @@
                     :alert-mb 1200))
    :healthcheck (:endpoint "/lisply/ping-lisp" :interval "72s"))
 
-  ;; The engineering service: the gendl sbcl variant.  Historical
-  ;; upstream name kept, as above.
-  (:name "jr-eng-cyborg"
-   :role :engineering
+  ;; The engineering service: the gendl sbcl variant.
+  (:role :engineering
    :description "The engineering service: computation and geometry for the stack and its users."
    :type "common-lisp"
    :image "gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-sbcl"
@@ -200,10 +189,8 @@
   ;; within).  A healthcheck only MARKS a container unhealthy; nothing
   ;; restarts it without an actor, so recovery must come from outside
   ;; the affected process.  The monitor restarts ANY service that
-  ;; fails its healthcheck.  Its canonical hostname is fixed upstream,
-  ;; kept here for the same continuity as the console's.
+  ;; fails its healthcheck.
   (:role :monitor
-   :name "medic"
    :description "Watches for hung services and restarts them."
    :type "utility"
    :image "willfarrell/autoheal:latest"

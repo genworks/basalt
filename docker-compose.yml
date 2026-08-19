@@ -64,12 +64,12 @@ services:
       retries: 3
       start_period: 15s
 
-  jr-eng-human:
+  first-officer:
     image: gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-ccl
-    container_name: ${BASILISK_PREFIX:-}jr-eng-human
-    hostname: jr-eng-human
+    container_name: ${BASILISK_PREFIX:-}first-officer
+    hostname: first-officer
     labels:
-      basilisk.post: "1st-officer"
+      basilisk.post: "first-officer"
       basilisk.requires: "gendl"
     restart: unless-stopped
     stdin_open: true
@@ -98,12 +98,12 @@ services:
       retries: 3
       start_period: 15s
 
-  jr-eng-cyborg:
+  engineer:
     image: gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-sbcl
-    container_name: ${BASILISK_PREFIX:-}jr-eng-cyborg
-    hostname: jr-eng-cyborg
+    container_name: ${BASILISK_PREFIX:-}engineer
+    hostname: engineer
     labels:
-      basilisk.post: "ships-engineer"
+      basilisk.post: "engineer"
       basilisk.requires: "gendl"
     restart: unless-stopped
     stdin_open: true
@@ -132,12 +132,12 @@ services:
       retries: 3
       start_period: 15s
 
-  medic:
+  doctor:
     image: willfarrell/autoheal:latest
-    container_name: ${BASILISK_PREFIX:-}medic
-    hostname: medic
+    container_name: ${BASILISK_PREFIX:-}doctor
+    hostname: doctor
     labels:
-      basilisk.post: "medic"
+      basilisk.post: "doctor"
     restart: unless-stopped
     stdin_open: true
     tty: true

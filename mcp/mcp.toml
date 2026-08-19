@@ -21,28 +21,28 @@ approval_mode = "approve"
 [mcp_servers.captain.tools.captain__lisp_eval]
 approval_mode = "approve"
 
-[mcp_servers.jr-eng-human]
+[mcp_servers.first-officer]
 command = "node"
-args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "jr-eng-human", "--backend-host", "jr-eng-human", "--http-port", "9080", "--request-timeout-ms", "30000"]
+args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "first-officer", "--backend-host", "first-officer", "--http-port", "9080", "--request-timeout-ms", "30000"]
 
-[mcp_servers.jr-eng-human.tools.jr-eng-human__ping_lisp]
+[mcp_servers.first-officer.tools.first-officer__ping_lisp]
 approval_mode = "approve"
 
-[mcp_servers.jr-eng-human.tools.jr-eng-human__http_request]
+[mcp_servers.first-officer.tools.first-officer__http_request]
 approval_mode = "approve"
 
-[mcp_servers.jr-eng-human.tools.jr-eng-human__lisp_eval]
+[mcp_servers.first-officer.tools.first-officer__lisp_eval]
 approval_mode = "approve"
 
-[mcp_servers.jr-eng-cyborg]
+[mcp_servers.engineer]
 command = "node"
-args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "jr-eng-cyborg", "--backend-host", "jr-eng-cyborg", "--http-port", "9090", "--request-timeout-ms", "30000"]
+args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "engineer", "--backend-host", "engineer", "--http-port", "9090", "--request-timeout-ms", "30000"]
 
-[mcp_servers.jr-eng-cyborg.tools.jr-eng-cyborg__ping_lisp]
+[mcp_servers.engineer.tools.engineer__ping_lisp]
 approval_mode = "approve"
 
-[mcp_servers.jr-eng-cyborg.tools.jr-eng-cyborg__http_request]
+[mcp_servers.engineer.tools.engineer__http_request]
 approval_mode = "approve"
 
-[mcp_servers.jr-eng-cyborg.tools.jr-eng-cyborg__lisp_eval]
+[mcp_servers.engineer.tools.engineer__lisp_eval]
 approval_mode = "approve"

@@ -20,27 +20,27 @@
      :http-host "captain"
      :http-port 7080
     )
-    (:name "jr-eng-human"
+    (:name "first-officer"
      :type "common-lisp"
      :lisp-impl "CCL"
      :mcp t
-     :http-host "jr-eng-human"
+     :http-host "first-officer"
      :http-port 9080
      :http-host-port ${GENDL_CCL_HOST_PORT:-19080}
-     :swank-host "jr-eng-human"
+     :swank-host "first-officer"
      :swank-port 4200
     )
-    (:name "jr-eng-cyborg"
+    (:name "engineer"
      :type "common-lisp"
      :lisp-impl "SBCL"
      :mcp t
-     :http-host "jr-eng-cyborg"
+     :http-host "engineer"
      :http-port 9090
      :http-host-port ${GENDL_SBCL_HOST_PORT:-29080}
-     :swank-host "jr-eng-cyborg"
+     :swank-host "engineer"
      :swank-port 4210
     )
-    (:name "medic"
+    (:name "doctor"
      :type "utility"
     )
    ))
