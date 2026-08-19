@@ -252,7 +252,8 @@ is a standalone service group rather than an interactive one.
 
 ## License
 
-Copyright © 2026 Genworks International.
+Copyright © 2026 Gornskew Enterprises. Basalt modifications
+copyright © 2026 Genworks International.
 
 Basalt is free software, released under the **GNU Affero General
 Public License, version 3 or later** — the full text is in
