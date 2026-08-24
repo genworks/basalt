@@ -138,7 +138,7 @@
              (:source "${EMACS_LOCAL_SRC:-/nonexistent}/.emacs-local-early"
               :target "/home/emacs-user/.emacs-local-early" :mode "ro"))
    ;; How this service shows on a monitoring dashboard.  :in-stack is
-   ;; the ONLY sanctioned routing for the :emacs kind -- emacs lisply
+   ;; the ONLY routing allowed for the :emacs kind -- emacs lisply
    ;; has no token gate, so it never rides a public path.  From
    ;; outside the stack, the console is sampled through that
    ;; deployment's own gendl-ccl proxy (publish-emacs-metrics!),
