@@ -131,6 +131,39 @@ _FILELIST
     eval "$COMPOSE_CMD $_rc_fargs $_rc_caller"
 }
 
+# The ship's own network name, read from .env where generate-env.sh
+# surfaced it (minted into .ship by the yard).
+ship_network() {
+    sed -n 's/^DOCKER_NETWORK_NAME=//p' "${SCRIPT_DIR}/.env" 2>/dev/null | head -1
+}
+
+# room_container SERVICE -- the container id of the room's current
+# keeper, resolved loudly.  `compose ps -q` is the primary; its stderr
+# used to be discarded, which hid a real intermittent failure for
+# weeks (observed 2026-08-23: base-file services resolving empty
+# mid-raise while overlay services resolved fine, muster board showing
+# rooms "(unkept)" and the MCP merge skipping -- cause unidentified,
+# hence the logging).  When the primary comes back empty, the error is
+# SAID, and a plain `docker ps` label lookup takes over: it needs no
+# compose config evaluation at all, and the ship's own network scopes
+# it to this instance.
+room_container() {
+    _room_tmp=$(mktemp) || return 1
+    _room_id="$(run_compose ps -q "$1" 2>"$_room_tmp" | head -1)"
+    if [ -z "$_room_id" ]; then
+        # Callers capture stdout, so the diagnosis rides stderr.
+        [ -s "$_room_tmp" ] && \
+            log_warning "compose ps -q $1 came back empty: $(head -1 "$_room_tmp")" >&2
+        _room_net="$(ship_network)"
+        _room_id="$(docker ps -q \
+            ${_room_net:+-f "network=${_room_net}"} \
+            -f "label=com.docker.compose.service=$1" 2>/dev/null | head -1)"
+        [ -n "$_room_id" ] && log_info "  ($1 resolved by label lookup instead)" >&2
+    fi
+    rm -f "$_room_tmp"
+    printf '%s' "$_room_id"
+}
+
 # =============================================================================
 # COLOR OUTPUT
 # printf %b interprets \033 escapes; works in bash, dash, zsh, macOS sh.
@@ -193,7 +226,7 @@ check_docker_compose() {
         exit 1
     fi
 
-    log_info "Using: $COMPOSE_CMD"
+    [ -n "${BASILISK_VERBOSE:-}" ] && log_info "Using: $COMPOSE_CMD"
     log_info "Compose files (application order - later files override earlier):"
 
     while IFS= read -r _full_path; do
@@ -218,6 +251,16 @@ _FILELIST
 init_env() {
     PROJECTS_DIR="${PROJECTS_DIR:-${HOME}/projects}"
     export PROJECTS_DIR
+
+    # The instance prefix, derived the same way generate-env.sh writes
+    # it into .env: compose reads .env, but THIS shell does not, so a
+    # BASILISK_INSTANCE run would otherwise muster (and hail) the
+    # wrong -- unprefixed -- containers when several stacks share the
+    # host.
+    if [ -n "${BASILISK_INSTANCE:-}" ] && [ -z "${BASILISK_PREFIX:-}" ]; then
+        BASILISK_PREFIX="${BASILISK_INSTANCE}-"
+    fi
+    export BASILISK_PREFIX
 
     # stat flag differs: Linux -c '%g', macOS -f '%g'
     if [ -S "/var/run/docker.sock" ]; then
@@ -246,36 +289,42 @@ ensure_env() {
 # =============================================================================
 show_help() {
     cat << EOF
-Basilisk — brings up the skewed-emacs stack: Emacs, the Gendl and GDL
-engines, Cyclops and autoheal, crewed onto one network and validated.
+Basilisk — raises a Basilisk-class ship: the standard rig flies a
+Ready Room (skewed-emacs), a Bridge and an Engineering Nexus (gendl),
+a Sick Bay (autoheal), and a Museum Chamber, mustered onto one network
+and validated.  Anything more — a Transporter Room, Guild Workshops —
+arrives by stack pouch (a *-stack repo installed beside this one).
 
-'Basilisk' names the STACK.  'skewed-emacs' keeps meaning the Emacs
-configuration and the image carrying it, which is one container in here.
-This script answers to both names: ./basilisk and ./compose-dev are the
-same file, so nothing that already says compose-dev breaks.  See
-BASILISK.md.
+Rooms answer to their module type slugs (ready-room, bridge, ...);
+containers wear the minted personal name of each room's keeper, fresh
+at every muster (read the roll with '$0 status', or from .muster).
+./basilisk and ./compose-dev are the same file, so nothing that
+already says compose-dev breaks.  See BASILISK.md and README.md.
 
 USAGE:
     $0 <command> [options]
 
 COMMANDS:
-    up [service...]     Start services (default: all services)
-    down               Stop and remove all services
-    restart [service]  Restart service(s)
-    stop [service]     Stop service(s) without removing
-    logs [service]     Show logs for service(s)
-    status             Show status of all services
+    up [module...]     Raise the ship, or named rooms only (default: all)
+    down               Stand the whole ship down
+    restart [module]   Relieve the watch — one room, or all
+    stop [module]      Stop without striking the berths
+    logs [module]      A room's logs
+    status             The muster: each room, its keeper, how they fare
     ps                 Show running containers
-    emacs              Connect to Emacs via emacsclient
+    emacs              Step into the ready room (emacsclient)
     pull               Pull missing images (use PULL_ALWAYS=1 to pull latest)
     clean              Remove containers, networks, and images
     init               Initialize environment (.env setup via generate-env.sh)
-    install-shell-functions  Write eskew/egskew helpers to shell RC file(s)
+    install-shell-functions  Write rmax/grmax helpers (+ eskew/egskew aliases) to shell RC file(s)
     config             Show merged Docker Compose configuration
 
-SERVICES:
-    Services are defined in docker-compose.yml and any other .yml files
-    in this directory (generated from basilisk.sexp, the editable SSoT).
+MODULES:
+    The ship's rooms are defined in docker-compose.yml and any other
+    .yml files in this directory (generated from basilisk.sexp, the
+    editable SSoT — the ship's articles).  Name a room by its type
+    slug: ready-room, bridge, engine-room, sick-bay,
+    museum-chamber, plus whatever an installed stack pouch adds.
 
 VARIANT SWITCHES (skewed-emacs image; anywhere on the command line):
     --lite | --default | --tui | --gui | --full
@@ -325,14 +374,18 @@ EOF
 # TEMPLATE SUBSTITUTION -- the yard rewrites the chief's standing
 # orders (and any other templated fittings) from the current crew, on
 # the way up.  templates/ arrives via a stack's ./install; crew.env is
-# generated from the articles.  A ${BASILISK_POST_<POSTING>}
-# placeholder resolves to the name of the first crew member standing
-# that posting, and ${BASILISK_POST_<POSTING>_<FREQ>_PORT} to the
-# aboard port of that member's named frequency -- so a rule written
-# against a POSTING keeps working when the hand standing it is
-# renamed or relieved.  One hand per posting for now (first declared
-# wins); multiples are a known limitation, deliberately unhandled
-# until the simple case has sailed.
+# generated from the articles.  ROUTINGS NAME A ROOM AND A CREW
+# MEMBER (ruling 2026-08-24): ${BASILISK_POST_<POSTING>_ROOM}
+# resolves to the room where that posting stands (the container
+# hostname), and ${BASILISK_POST_<POSTING>_<FREQ>_PORT} to the aboard
+# port the crew member standing it answers on -- "the captain in the
+# ready room" is port 7080 in the skewed-emacs room.  The articles'
+# hailing-frequencies are the single source of truth for every port;
+# fittings look ports up, never restate them.  A rule written this
+# way keeps working when the hand standing the post is renamed or
+# relieved.  One hand per posting for now (first declared wins);
+# multiples are a known limitation, deliberately unhandled until the
+# simple case has sailed.
 substitute_templates() {
     [ -d "${SCRIPT_DIR}/templates" ] || return 0
     # The ledger arrives in layers: the base ship's generated/crew.env
@@ -373,9 +426,60 @@ substitute_templates() {
     rm -f "$_st_env"
 }
 
+# ONE RAISE HOLDS THE SLIPWAY AT A TIME.  Fixed container names used
+# to make concurrent raises self-blocking: the second `up` collided on
+# container_name and failed loudly.  Minted names removed that
+# accidental interlock -- two concurrent raises each mint their own
+# complement and docker happily boards BOTH (observed 2026-08-23:
+# a doubled fleet, two keepers per room, four rooms twinned).  So the
+# raise takes an explicit lock now: flock on .slipway beside the
+# compose files.  Stand-downs and restarts take the same lock -- a
+# down racing an up is the same doubled-fleet factory from the other
+# side.  Waits briefly rather than failing: back-to-back invocations
+# (a deploy script, an impatient operator) serialize instead of dying.
+take_the_slipway() {
+    command -v flock > /dev/null 2>&1 || return 0
+    # .conn was the lock's name before 2026-08-24; clear a leftover so
+    # it cannot confuse a reader (it held no state, only the flock).
+    rm -f "${SCRIPT_DIR}/.conn" 2>/dev/null || true
+    exec 9>>"${SCRIPT_DIR}/.slipway" || return 0
+    flock -n 9 && return 0
+    log_info "another raise or stand-down holds the slipway; waiting (up to 120s)..."
+    if ! flock -w 120 9; then
+        log_error "could not take the slipway after 120s -- is another raise wedged? (lock: ${SCRIPT_DIR}/.slipway)"
+        exit 1
+    fi
+}
+
 start_services() {
     _ss_services="$*"
+    take_the_slipway
     init_env
+
+    # A NEW SHIP AT EVERY RAISING (ruling 2026-08-24): a full `up`
+    # raises a NEW ship -- fresh minted name, fresh network wearing it
+    # -- and the ship standing before him, if any, is stood down first
+    # and buried under his own name (generate-env.sh writes the log of
+    # ships).  Rousing named rooms (`up <module...>`) works on the
+    # STANDING ship and mints nothing, as do restart and stop.  An
+    # inherited BASILISK_SHIP pin (env or host.env) keeps the old
+    # behavior entirely, for rigs that want one name held.
+    if [ -z "$_ss_services" ] && [ -z "${BASILISK_SHIP:-}" ]; then
+        _ss_old_net="$(_ship_network_name 2>/dev/null)"
+        if [ -n "$_ss_old_net" ] \
+           && docker network inspect "$_ss_old_net" >/dev/null 2>&1 \
+           && [ -n "$(docker ps -q -f "network=${_ss_old_net}" 2>/dev/null)" ]; then
+            log_info "The standing ship '${_ss_old_net}' goes to his rest before the new raising"
+            mkdir -p "${SCRIPT_DIR}/generated"
+            run_compose down --remove-orphans \
+                >"${SCRIPT_DIR}/generated/last-stand-down.log" 2>&1 \
+                || log_warning "the old ship went down protesting (see generated/last-stand-down.log)"
+            release_ship
+        fi
+        BASILISK_MINT_FRESH=1
+        export BASILISK_MINT_FRESH
+    fi
+
     ensure_env
     substitute_templates
 
@@ -397,9 +501,40 @@ start_services() {
 
     pull_images
 
-    log_info "Starting services: ${_ss_services:-all}"
+    # The muster: mint/refresh each room's resident name BEFORE the vat
+    # runs -- compose interpolates the names into container_name.
+    muster_crew
+
+    _ss_ship="$(_ship_name)"
+    if [ -n "$_ss_services" ]; then
+        log_info "Rousing on the standing ship${_ss_ship:+ ${_ss_ship}}: ${_ss_services}"
+    else
+        log_info "All hands to stations; the R.V. ${_ss_ship:-Basilisk} takes the slipway"
+    fi
+    # --remove-orphans: EVERY RENAME EPOCH STRANDS THE OLD COMPLEMENT
+    # (found the hard way, shelly 2026-08-23).  The current config no
+    # longer names containers a previous naming era created (crew-post
+    # names, or a pull-before-down during a config mismatch), so a
+    # plain up steps politely around them forever while they eat the
+    # box -- shelly wedged solid on exactly this; sally carried the
+    # same dead weight and merely had the RAM to hide it.  mcp-exec's
+    # own start path has passed this flag all along.  Known caveat:
+    # two instances raised from same-named clone directories share a
+    # compose project name, so one instance's sweep could in principle
+    # collect the other's crew -- a pre-existing wrinkle of the shared
+    # project name, noted with the instance-isolation question rather
+    # than solved here.
+    # Compose's Creating/Created/Starting/Started chatter (4 lines x
+    # every hand, minted names the muster already announced) rides in a
+    # log and surfaces only on failure; the gangway watch below reports
+    # the raise in its own words.
+    mkdir -p "${SCRIPT_DIR}/generated"
+    _ss_up_log="${SCRIPT_DIR}/generated/last-raise.log"
     # shellcheck disable=SC2086  (word-split intentional: service names)
-    run_compose up -d $_ss_services
+    if ! run_compose up -d --remove-orphans $_ss_services >"$_ss_up_log" 2>&1; then
+        log_error "The raise went wrong; compose says:"
+        sed 's/^/    /' "$_ss_up_log"
+    fi
 
     # Started != validated: actively probe every healthchecked service
     # (kill + recreate hung-on-start containers, e.g. the CCL ASLR
@@ -531,12 +666,86 @@ PYEOF
     return 0
 }
 
+# =============================================================================
+# SHIP RELEASE AFTER DOWN
+#
+# compose removes the ship (the network) last, and a hand that had to be
+# SIGKILLed at the stop_grace_period deadline can leave the daemon's
+# endpoint cleanup a beat behind the network rm.  down then prints
+# "Resource is still in use" in yellow and sails on, leaving the ship
+# adrift -- observed on narad 2026-08-21 (tmp/startup-glitch.txt): the
+# navigator ate SIGTERM for the full 10s grace, and by the time a human
+# retyped `docker network rm vyesk` it succeeded, which is the signature
+# of the race rather than of a genuine holder.  So: retry briefly, and
+# if the ship really is held (a container from outside the articles
+# still plugged in), say who has the line instead of a silent yellow.
+# =============================================================================
+_ship_network_name() {
+    # Same precedence generate-env.sh uses when minting: an inherited
+    # BASILISK_SHIP wins, then the per-instance .ship file, then .env's
+    # DOCKER_NETWORK_NAME, then the compose fallback.
+    _snn=""
+    _snn_file="${SCRIPT_DIR}/.ship${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
+    if [ -n "${BASILISK_SHIP:-}" ]; then
+        _snn="$BASILISK_SHIP"
+    elif [ -f "$_snn_file" ]; then
+        _snn="$(head -1 "$_snn_file")"
+    elif [ -f "${SCRIPT_DIR}/.env" ]; then
+        _snn="$(sed -n 's/^DOCKER_NETWORK_NAME=//p' "${SCRIPT_DIR}/.env" | head -1)"
+    fi
+    # Fallback for a hull raised by hand before the yard named him:
+    # he sails under the class name (matches the generated compose's
+    # own ${DOCKER_NETWORK_NAME:-basilisk} fallback).
+    [ -n "$_snn" ] || _snn="basilisk"
+    printf '%s' "$_snn" | tr 'A-Z' 'a-z'
+}
+
+release_ship() {
+    _rls_net="$(_ship_network_name)"
+    docker network inspect "$_rls_net" > /dev/null 2>&1 || return 0
+    _rls_tries=0
+    while [ "$_rls_tries" -lt 5 ]; do
+        if docker network rm "$_rls_net" > /dev/null 2>&1; then
+            log_info "Ship's network '${_rls_net}' was left in use by down; released it (try $((_rls_tries + 1)))"
+            return 0
+        fi
+        _rls_tries=$((_rls_tries + 1))
+        sleep 1
+    done
+    _rls_holders="$(docker network inspect \
+        --format '{{range .Containers}}{{.Name}} {{end}}' "$_rls_net" 2>/dev/null)"
+    log_warning "Ship's network '${_rls_net}' is still in use after down${_rls_holders:+ -- held by: ${_rls_holders}}"
+    log_warning "  release it once free: docker network rm ${_rls_net}"
+    return 0
+}
+
 stop_services() {
-    log_info "Stopping all services"
-    run_compose down
+    take_the_slipway
+    _sts_ship="$(_ship_name)"
+    if [ -n "$_sts_ship" ]; then
+        log_info "Standing down the ${_sts_ship}: all hands ashore"
+    else
+        log_info "Stopping all services"
+    fi
+    # --remove-orphans for the same reason up passes it: a stand-down
+    # should not leave a previous naming era's containers running.
+    # Compose's container-by-container chatter (Stopping/Stopped/
+    # Removing/Removed x every hand) carries nothing the muster didn't
+    # already say, so it rides in a log and surfaces only on failure.
+    mkdir -p "${SCRIPT_DIR}/generated"
+    _sts_log="${SCRIPT_DIR}/generated/last-stand-down.log"
+    run_compose down --remove-orphans >"$_sts_log" 2>&1
+    _sts_rc=$?
+    if [ "$_sts_rc" -ne 0 ]; then
+        log_error "Stand-down failed; compose says:"
+        sed 's/^/    /' "$_sts_log"
+    fi
+    release_ship
+    return "$_sts_rc"
 }
 
 restart_services() {
+    take_the_slipway
     log_info "Restarting services: ${*:-all}"
     run_compose restart "$@"
     validate_services
@@ -551,15 +760,19 @@ restart_services() {
 # CREW IDENTITY MINTING (the Basilisk ship-and-crew conceit, framework-level)
 #
 # Mints a per-container identity -- NAME (random, species-flavored),
-# SPECIES, ROLE -- and writes it into /tmp/skewed-crew-identity inside
-# each running container, once.
+# SPECIES, POSTING, ROLE -- and writes it into
+# /tmp/skewed-crew-identity inside each running container, once.
 #
-# The two axes come from two different places, on purpose.  SPECIES is
-# the IMAGE TYPE, read off Config.Image and never looked up.  ROLE
-# comes from the POSTING -- the basilisk.post label, falling back to
-# the hostname that basilisk.sexp already assigns.  So renaming a
-# service in an overlay changes what it stands, not what it is, and
-# swapping its image changes what it is, not what it stands.
+# The axes come from different places, on purpose.  SPECIES is the
+# IMAGE TYPE, read off Config.Image and never looked up.  POSTING is
+# the declared datum -- the basilisk.post label (a comma list),
+# falling back to the hostname that basilisk.sexp already assigns.
+# So renaming a service in an overlay changes what it stands, not
+# what it is, and swapping its image changes what it is, not what it
+# stands.  ROLE= is a legacy rendering of the posting kept only for
+# its remaining consumers (cyclops utility.lisp and eyes-only
+# metrics.lisp, both feeding the eyes-only board); it retires with
+# the eyes-only revamp -- new readers take POSTING=.
 #
 # No schema change, every existing overlay (sally-stack, shelly-stack,
 # ...) participates automatically, and any container this script has
@@ -626,7 +839,7 @@ _crew_species_from_image() {
 # stylish name and nothing more.
 #
 # Trailing -N is tolerated so a ship can carry more than one of a post
-# (jr-eng-cyborg-2 is still an engineer).
+# (engineer-2 is still an engineer).
 #
 # transporter-chief is the CURRENT name of the ingress posting (a
 # reverse proxy receives; it never goes anywhere, so "pilot" described
@@ -637,15 +850,31 @@ _crew_species_from_image() {
 # decision (Dave) -- do not rename the role here as a tidy-up.
 _crew_role_for_posting() {
     case "$1" in
+        # Canon postings (positions ruling 2026-08-24: captain,
+        # first-officer, ships-engineer, doctor; guild-engineer,
+        # transporter-chief and communications-officer berthed by
+        # overlay -- the comms officer's own radio shack room awaits
+        # the Eyes Only refit).  The -* arms tolerate -2/-3 collision
+        # suffixes and multi-post slugs (first-officer-comms is still
+        # bridge crew).
         captain|captain-[0-9]*)   echo "captain" ;;
-        transporter-chief|transporter-chief-[0-9]*) echo "pilot" ;;
-        pilot|pilot-[0-9]*)       echo "pilot" ;;
-        medic|medic-[0-9]*)       echo "doctor" ;;
-        communications-officer|communications-officer-[0-9]*) echo "comm" ;;
-        comms|comms-[0-9]*)       echo "comm" ;;
-        "${BASILISK_VOCAB_STOWAWAY_DESIGNATOR:-stowaway}"-*) echo "stowaway" ;;
+        first-officer|first-officer-*) echo "engineer" ;;
         ships-engineer|ships-engineer-[0-9]*) echo "engineer" ;;
         guild-engineer|guild-engineer-[0-9]*) echo "engineer" ;;
+        doctor|doctor-[0-9]*)     echo "doctor" ;;
+        transporter-chief|transporter-chief-[0-9]*) echo "pilot" ;;
+        pilot|pilot-[0-9]*)       echo "pilot" ;;
+        communications-officer|communications-officer-[0-9]*) echo "comm" ;;
+        "${BASILISK_VOCAB_STOWAWAY_DESIGNATOR:-stowaway}"-*) echo "stowaway" ;;
+        # Legacy posting names, tolerated for containers created
+        # before their renames (medic -> doctor 2026-08-18; engineer ->
+        # ships-engineer, positions ruling 2026-08-24; radio-shack
+        # briefly named the comms POSTING that same day before the
+        # ruling settled it as his ROOM; jr-eng-* -> derived slugs).
+        medic|medic-[0-9]*)       echo "doctor" ;;
+        engineer|engineer-[0-9]*) echo "engineer" ;;
+        radio-shack|radio-shack-[0-9]*) echo "comm" ;;
+        comms|comms-[0-9]*)       echo "comm" ;;
         jr-eng-*|sr-eng-*|guild-*) echo "engineer" ;;
         *)                        echo "crew" ;;
     esac
@@ -668,6 +897,88 @@ _crew_role_for_postings() {
     done
     IFS=$_crp_old_ifs
     echo "$_crp_role"
+}
+
+# MUSTER TITLES COME FROM THE POSTING (2026-08-24), not from the role
+# vocabulary above: the posting is the datum -- what the articles
+# declare -- and the ROLE strings survive only as a legacy rendering
+# for eyes-only skins, retired with the eyes-only revamp.  Empty
+# output means "no title known for this posting"; the caller decides
+# between Crew (posted but unrecognized) and Stowaway (no posting at
+# all).  Defaults are canon's words; a fork overrides them via its
+# sourced vocabulary, same as ever.
+# The canonical title is "Captain" (2026-08-25 ruling; "Cap'n" is
+# reserved for possible later play in eyes-only or the dashboard).
+# The plain variable stays: a fork's title may carry an apostrophe,
+# which cannot ride inside a ${...:-default} expansion (the parser
+# reads it as an opening quote).
+_bk_title_capn_default="Captain"
+_crew_title_for_posting() {
+    case "$1" in
+        captain|captain-[0-9]*)        echo "${BASILISK_VOCAB_TITLE_CAPTAIN:-$_bk_title_capn_default}" ;;
+        first-officer|first-officer-*) echo "${BASILISK_VOCAB_TITLE_FIRST_OFFICER:-1st Off}" ;;
+        ships-engineer|ships-engineer-[0-9]*|engineer|engineer-[0-9]*)
+                                       echo "${BASILISK_VOCAB_TITLE_ENGINEER:-Engineer}" ;;
+        guild-engineer|guild-engineer-[0-9]*|jr-eng-*|sr-eng-*|guild-*)
+                                       echo "${BASILISK_VOCAB_TITLE_ENGINEER:-Engineer}" ;;
+        doctor|doctor-[0-9]*|medic|medic-[0-9]*)
+                                       echo "${BASILISK_VOCAB_TITLE_DOCTOR:-Doctor}" ;;
+        transporter-chief|transporter-chief-[0-9]*|pilot|pilot-[0-9]*)
+                                       echo "${BASILISK_VOCAB_TITLE_PILOT:-T-Chief}" ;;
+        communications-officer|communications-officer-[0-9]*|radio-shack|radio-shack-[0-9]*|comms|comms-[0-9]*)
+                                       echo "${BASILISK_VOCAB_TITLE_COMM:-Comm}" ;;
+        navigator|navigator-[0-9]*)    echo "${BASILISK_VOCAB_TITLE_NAVIGATOR:-Navigator}" ;;
+        museum-curator|museum-curator-[0-9]*)
+                                       echo "${BASILISK_VOCAB_TITLE_CURATOR:-Curator}" ;;
+        *)                             echo "" ;;
+    esac
+}
+
+# First titled posting in a comma list wins, without reading position
+# as primacy -- same shape as _crew_role_for_postings.
+_crew_title_for_postings() {
+    _ctp_title=""
+    _ctp_old_ifs=$IFS; IFS=','
+    for _ctp_p in $1; do
+        _ctp_t="$(_crew_title_for_posting "$_ctp_p")"
+        if [ -n "$_ctp_t" ]; then
+            _ctp_title="$_ctp_t"
+            break
+        fi
+    done
+    IFS=$_ctp_old_ifs
+    echo "$_ctp_title"
+}
+
+# The standing ship's minted name, read from .ship ("Zhuryss").
+# Empty when no ship has been minted yet.
+_ship_name() {
+    head -1 "${SCRIPT_DIR}/.ship" 2>/dev/null
+}
+
+# Pretty room name from a room slug: "engine-room" -> "Engine Room".
+_room_pretty() {
+    printf '%s' "$1" | tr '-' ' ' \
+        | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1'
+}
+
+# Display form for a keeper, from the container's own labels:
+# "Captain Thrilk in the Ready Room".  The room is the compose SERVICE
+# key (the room slug -- basilisk.module is the module TYPE, which the
+# second guild workshop shares with the first); a container with no
+# recognizable title or room falls back gracefully to its bare name.
+_crew_display() {
+    _cd_name="$1"
+    _cd_posts="$(docker inspect --format \
+        '{{index .Config.Labels "basilisk.post"}}' "$_cd_name" 2>/dev/null)"
+    _cd_room="$(docker inspect --format \
+        '{{index .Config.Labels "com.docker.compose.service"}}' \
+        "$_cd_name" 2>/dev/null)"
+    _cd_title=""
+    [ -n "$_cd_posts" ] && _cd_title="$(_crew_title_for_postings "$_cd_posts")"
+    _cd_out="${_cd_title:+$_cd_title }${_cd_name#"${BASILISK_PREFIX:-}"}"
+    [ -n "$_cd_room" ] && _cd_out="$_cd_out in the $(_room_pretty "$_cd_room")"
+    printf '%s' "$_cd_out"
 }
 
 # MANNED/DRONE IS GONE FROM HERE, deliberately (Dave, 2026-08-17).
@@ -710,34 +1021,42 @@ _crew_role_for_postings() {
 # image yet, so nothing mints one today, but it lands the moment the
 # board ships as a binary with a :post :comms.  Until 2026-08-17 it
 # would have fallen through to the unknown pool and sounded like no
-# one.  The Comms character -- lilting and nasal, resolving on a hum,
-# so a name trails off rather than stopping -- is deliberately the one
-# corner of the sonic space the other
-# pools leave empty: captain consonant-heavy, gendl liquid, gdl
-# English-gentry, cyclops clipped and sibilant, autoheal vocalic.
+# one.  The Communications Officer answers to a Korean given name;
+# the transporter room is kept by an old Irish line of chiefs, the
+# most honored name of the line left off the rolls out of respect.
+# Each pool keeps its own corner of the sonic space: captain
+# consonant-heavy, gendl liquid, gdl English-gentry, autoheal vocalic.
 _crew_onsets_for() {
     case "$1" in
-        skewed-emacs:*) echo 'Bl Gr Thr Kro Zar Vex Mog Drel' ;;
-        cyclops:*)      echo 'Bl Zh Vek Skr Yor Tsa Kli Dro' ;;
+        readymax:*|skewed-emacs:*) echo 'Bl Gr Thr Kro Zar Vex Mog Drel' ;;
+        cyclops:*)      echo 'Mul Cal Bran Flan Kear Dun Scan Gall' ;;
         gendl:*sbcl*)   echo 'Vas Ael Ion Cyr Tha Mor Zel Ryn' ;;
         gendl:*)        echo 'Ka Lis Par Quo Sem Tel Nym Ori' ;;
         gdl:*non-smp*)  echo 'Ad Bex Cor Dal Enn Fir Gal Hux' ;;
         gdl:*)          echo 'Ost Ven Kal Rhe Sig Tor Wex Yar' ;;
         autoheal:*)     echo 'Om Sal Vel Lum Mir Ana Eir Thea' ;;
-        eyes-only:*)    echo 'Nil Myr Len Vael Sion Nyel Lir Nao' ;;
+        eyes-only:*)    echo 'Ji Min Seo Ha Soo Eun Hye Yu' ;;
+        # The Curator riffs on the greybeards (Dave's ruling,
+        # 2026-08-23: the persona inside the chamber may cycle
+        # through riffs on famous unix & lisp names).
+        museum-chamber:*) echo 'Ken Rit Kern Thom Mc Den Bri Stal' ;;
+        # The Navigator sounds like the astronomers he steers by.
+        chartroom:*)    echo 'Kep Tych Gal Hip Cass Ori Hal Alt' ;;
         *)              echo 'X Yz Qm' ;;
     esac
 }
 _crew_finals_for() {
     case "$1" in
-        skewed-emacs:*) echo 'org arn und ath esh ork ilk uz' ;;
-        cyclops:*)      echo 'ej ix osk arr unn eth yx oa' ;;
+        readymax:*|skewed-emacs:*) echo 'org arn und ath esh ork ilk uz' ;;
+        cyclops:*)      echo 'doon lahan nigan herty ney ley lon agher' ;;
         gendl:*sbcl*)   echo 'ien uur eos aal ymn ore ith yss' ;;
         gendl:*)        echo 'da per lon ta mir vex is und' ;;
         gdl:*non-smp*)  echo 'mand ton dry well berg worth field ston' ;;
         gdl:*)          echo 'holm gate forge crest march stead vale bury' ;;
         autoheal:*)     echo 'a une is oon ara elle ios em' ;;
-        eyes-only:*)    echo 'am een ion um ain oem un yn' ;;
+        eyes-only:*)    echo 'woo yeon jin sun ri na young mi' ;;
+        museum-chamber:*) echo 'ompson itchie ighan psen arthy istow ansen lman' ;;
+        chartroom:*)    echo 'ler o ileo parchus iopeia on ley air' ;;
         *)              echo 'ar il ot' ;;
     esac
 }
@@ -782,11 +1101,135 @@ _crew_unique_name() {
     _crew_unique_name_result="$_cun_name"
 }
 
+# =============================================================================
+# THE MUSTER (ruling 2026-08-23): ROOMS ARE KNOWN BY THEIR KEEPERS.
+#
+# container_name is the PRIMARY RESIDENT'S minted personal name --
+# docker's native name field carries the crew name, nothing invented --
+# while the service key / hostname / in-network DNS stay the room's
+# module slug (the type-hail).  The generated compose interpolates
+#     container_name: ${BASILISK_PREFIX:-}${BASILISK_CREW_<MODULE>:-<module>}
+# so these vars must be exported before ANY invocation that could
+# create a container.  muster_crew mints them (species-flavored pools
+# above) and persists the roll in .muster (per instance, uncommitted,
+# beside .ship); muster_load re-exports a standing roll for every other
+# command, so a recreate during e.g. `restart' validation does not
+# quietly rename anyone.
+#
+# RELIEF SEMANTICS: a name is kept while a container bearing it exists.
+# No container (first raise, after a down, after a docker rm) -> a
+# fresh name is minted: the relief in place, fresh face, fresh name,
+# same room.  A kill+recreate during validation keeps the name (the
+# wedged hand is revived, not relieved); whether an image change should
+# force a relief is deliberately left simple for now -- the name
+# follows the container's existence, nothing subtler.
+# =============================================================================
+_muster_file() {
+    printf '%s/.muster%s' "$SCRIPT_DIR" "${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
+}
+
+muster_load() {
+    _ml_f="$(_muster_file)"
+    [ -f "$_ml_f" ] || return 0
+    while IFS='=' read -r _ml_k _ml_v; do
+        case "$_ml_k" in
+            BASILISK_CREW_*) export "$_ml_k=$_ml_v" ;;
+        esac
+    done < "$_ml_f"
+}
+
+muster_crew() {
+    _mc_ledger=$(mktemp) || return 0
+    _mc_found=0
+    for _mc_e in "${SCRIPT_DIR}/generated/crew.env" "${SCRIPT_DIR}/generated/"*-crew.env; do
+        [ -f "$_mc_e" ] || continue
+        cat "$_mc_e" >> "$_mc_ledger"
+        _mc_found=1
+    done
+    if [ "$_mc_found" = 0 ]; then
+        log_warning "no crew ledger in generated/; the vat raises unmustered rooms (module-slug container names)"
+        rm -f "$_mc_ledger"
+        return 0
+    fi
+
+    _mc_muster="$(_muster_file)"
+    _mc_out=$(mktemp) || { rm -f "$_mc_ledger"; return 0; }
+    _mc_existing="$(docker ps -a --format '{{.Names}}' 2>/dev/null)"
+    _crew_minted_names=""
+
+    # Module rows out of the layered ledgers, last file winning key-wise
+    # (same layering substitute_templates uses).  Each row: NAME<TAB>SPECIES.
+    _mc_rows=$(awk -F= '
+        /^BASILISK_MOD_[A-Z0-9_]*_NAME=/    { k=$1; sub(/_NAME$/,"",k);    name[k]=$2 }
+        /^BASILISK_MOD_[A-Z0-9_]*_SPECIES=/ { k=$1; sub(/_SPECIES$/,"",k); spec[k]=$2 }
+        END { for (k in name) print name[k] "\t" spec[k] }' "$_mc_ledger" | sort)
+    rm -f "$_mc_ledger"
+
+    log_info "Mustering the crew (rooms are known by their keepers):"
+    while IFS='	' read -r _mc_room _mc_species; do
+        [ -n "$_mc_room" ] || continue
+        # The ledger species carries provenance (gornskew/gendl:devo-ccl);
+        # the name pools key on bare repo:tag, so strip the home planet
+        # the same way identity minting does.
+        _mc_species="$(_crew_species_from_image "$_mc_species")"
+        _mc_var="BASILISK_CREW_$(printf '%s' "$_mc_room" | tr 'a-z' 'A-Z' | tr -c 'A-Z0-9\n' '_')"
+        _mc_cur=""
+        [ -f "$_mc_muster" ] && \
+            _mc_cur="$(sed -n "s/^${_mc_var}=//p" "$_mc_muster" | head -1)"
+        if [ -n "$_mc_cur" ] && printf '%s\n' "$_mc_existing" | \
+            grep -qxF "${BASILISK_PREFIX:-}${_mc_cur}"; then
+            # The hand is aboard: same name, same room, watch continues.
+            _crew_minted_names="${_crew_minted_names:+$_crew_minted_names }${_mc_cur}"
+            _mc_name="$_mc_cur"
+            log_info "  ${_mc_name}'s $(printf '%s' "$_mc_room" | tr '-' ' ') stands its watch"
+        else
+            # No container bearing the name: mint a relief.  Unique per
+            # run via _crew_minted_names, against every name the docker
+            # daemon already knows -- and never the very name being
+            # relieved: a relief is a fresh face, and a re-rolled
+            # "Anaune relieves Anaune" reads as a hand surviving the
+            # ship (drawn live from the 64-name autoheal pool,
+            # 2026-08-24).
+            _mc_tries=0
+            while :; do
+                _crew_unique_name "$_mc_species"
+                _mc_name="$_crew_unique_name_result"
+                if [ "$_mc_name" != "$_mc_cur" ] && \
+                   ! printf '%s\n' "$_mc_existing" | \
+                       grep -qxF "${BASILISK_PREFIX:-}${_mc_name}"; then
+                    break
+                fi
+                _mc_tries=$((_mc_tries + 1))
+                [ "$_mc_tries" -ge 20 ] && break
+            done
+            if [ -n "$_mc_cur" ]; then
+                log_info "  ${_mc_name} relieves ${_mc_cur} in the $(printf '%s' "$_mc_room" | tr '-' ' ')"
+            else
+                log_info "  ${_mc_name} musters into the $(printf '%s' "$_mc_room" | tr '-' ' ')"
+            fi
+        fi
+        printf '%s=%s\n' "$_mc_var" "$_mc_name" >> "$_mc_out"
+        export "$_mc_var=$_mc_name"
+    done << _MC_ROWS
+$_mc_rows
+_MC_ROWS
+
+    mv "$_mc_out" "$_mc_muster"
+}
+
 mint_crew_identities() {
-    _ci_ids="$(run_compose ps -q 2>/dev/null)"
+    _ci_tmp=$(mktemp)
+    _ci_ids="$(run_compose ps -q 2>"$_ci_tmp")"
+    if [ -z "$_ci_ids" ]; then
+        [ -s "$_ci_tmp" ] && log_warning "compose ps -q (minting) came back empty: $(head -1 "$_ci_tmp")"
+        _ci_net="$(ship_network)"
+        _ci_ids="$(docker ps -q ${_ci_net:+-f "network=${_ci_net}"} 2>/dev/null)"
+        [ -n "$_ci_ids" ] && log_info "  (crew found by network lookup instead)"
+    fi
+    rm -f "$_ci_tmp"
     [ -n "$_ci_ids" ] || return 0
 
-    _crew_minted_names=""
+    _ci_ship="$(_ship_name)"
     for _ci_id in $_ci_ids; do
         _ci_name="$(docker inspect --format "{{.Name}}" "$_ci_id" 2>/dev/null)" || continue
         _ci_name="${_ci_name#/}"
@@ -822,8 +1265,11 @@ _ci_image="$(docker inspect --format \
         [ -n "$_ci_post" ] && _ci_posting="$_ci_post"
 
         _ci_role="$(_crew_role_for_postings "$_ci_posting")"
-        _crew_unique_name "$_ci_species"
-        _ci_mint_name="$_crew_unique_name_result"
+        # The container name IS the minted name now (ruling 2026-08-23:
+        # rooms are known by their keepers) -- the muster minted it
+        # before the vat ran, so the identity file simply records it.
+        # No second minting here: one hand, one name.
+        _ci_mint_name="${_ci_name#${BASILISK_PREFIX:-}}"
 
         # NAME= stays FIRST: every reader is key-based except
         # skewed-emacs's dashboard, which reads line 1 and requires the
@@ -832,10 +1278,10 @@ _ci_image="$(docker inspect --format \
         # every reader scans for its own keys, so dropping it is
         # backward-compatible the same way adding it was.
         if docker exec "$_ci_name" sh -c \
-            "printf 'NAME=%s\nSPECIES=%s\nROLE=%s\n' '$_ci_mint_name' '$_ci_species' '$_ci_role' > /tmp/skewed-crew-identity" \
+            "printf 'NAME=%s\nSPECIES=%s\nPOSTING=%s\nROLE=%s\n' '$_ci_mint_name' '$_ci_species' '$_ci_posting' '$_ci_role' > /tmp/skewed-crew-identity" \
             2>/dev/null
         then
-            log_success "  ${_ci_name}: crew identity minted -- ${_ci_mint_name} (${_ci_role}, ${_ci_species})"
+            log_success "  $(_crew_display "$_ci_name") (module sku ${_ci_species}) takes the Oath of Service${_ci_ship:+ to the R.V. ${_ci_ship}}"
         else
             log_warning "  ${_ci_name}: could not write crew identity (no shell/writable rootfs?)"
         fi
@@ -855,15 +1301,27 @@ _ci_image="$(docker inspect --format \
 # once, event-driven, replacing the old 5x2s blind retry loop.
 # =============================================================================
 merge_mcp_configs() {
-    log_info "Preparing MCP configurations (JSON + TOML)..."
+    log_info "Opening hailing frequencies for cyborg passengers (MCP configurations, JSON + TOML)..."
+
+    # Resolve the ready room's keeper ONCE and drive everything below
+    # through plain docker on the container id: compose-level service
+    # resolution failed intermittently mid-raise (2026-08-23, cause
+    # under observation via room_container's logging), and each of the
+    # seven compose-addressed steps below then failed in its own way.
+    _mcp_cap="$(room_container ready-room)"
+    if [ -z "$_mcp_cap" ]; then
+        log_warning "no keeper found for the ready room; skipping MCP config merge"
+        return 1
+    fi
 
     case " ${VALIDATED_OK:-} " in
-        *" captain "*) ;;
+        *" ready-room "*) ;;
         *)
-            # The Captain was not validated this run (single-service up,
-            # failed validation, or already running from before): probe the
-            # daemon once directly instead of looping blind.
-            if ! run_compose exec -T captain emacsclient --eval t \
+            # The ready room was not validated this run (single-service
+            # up, failed validation, or already running from before):
+            # probe the Captain's daemon once directly instead of
+            # looping blind.
+            if ! docker exec "$_mcp_cap" emacsclient --eval t \
                 > /dev/null 2>&1
             then
                 log_warning "Captain daemon not available; skipping MCP config merge"
@@ -877,7 +1335,7 @@ merge_mcp_configs() {
     # create time (a recreate reintroduces them; host-side chown cannot
     # reach container-fs dirs).  The merge writes config.toml into both,
     # so repair ownership first; harmless no-op on full images.
-    run_compose exec -T -u root captain sh -c \
+    docker exec -u root "$_mcp_cap" sh -c \
         "chown -R emacs-user /home/emacs-user/.codex /home/emacs-user/.grok" \
         > /dev/null 2>&1 || true
 
@@ -895,7 +1353,7 @@ merge_mcp_configs() {
     # Same failure shape as the mcp/entrypoint.sh incident: a split moved
     # files by concept without checking every consumer.
     _mcp_stage="/tmp/basilisk-mcp"
-    run_compose exec -T captain mkdir -p "$_mcp_stage" > /dev/null 2>&1 || {
+    docker exec "$_mcp_cap" mkdir -p "$_mcp_stage" > /dev/null 2>&1 || {
         log_warning "could not create $_mcp_stage in the Captain; skipping MCP merge"
         return 1
     }
@@ -910,8 +1368,8 @@ merge_mcp_configs() {
         "${SCRIPT_DIR}/mcp/"*-mcp.toml
     do
         [ -f "$_mcpfile" ] || continue
-        log_info "Staging: $(basename "$_mcpfile")"
-        run_compose cp "$_mcpfile" "captain:${_mcp_stage}/" 2>/dev/null \
+        [ -n "${BASILISK_VERBOSE:-}" ] && log_info "Staging: $(basename "$_mcpfile")"
+        docker cp "$_mcpfile" "${_mcp_cap}:${_mcp_stage}/" > /dev/null 2>&1 \
             || log_warning "  could not stage $(basename "$_mcpfile")"
     done
 
@@ -938,19 +1396,19 @@ merge_mcp_configs() {
     for _overlay in "${SCRIPT_DIR}/generated/"*services-generated.el \
                     "${SCRIPT_DIR}/dot-files/emacs.d/etc/services-discovery.el"; do
         [ -f "$_overlay" ] || continue
-        log_info "Copying overlay: $(basename "$_overlay")"
-        run_compose cp "$_overlay" \
-            captain:/home/emacs-user/skewed-emacs/dot-files/emacs.d/etc/ 2>/dev/null || true
+        [ -n "${BASILISK_VERBOSE:-}" ] && log_info "Copying overlay: $(basename "$_overlay")"
+        docker cp "$_overlay" \
+            "${_mcp_cap}:/home/emacs-user/skewed-emacs/dot-files/emacs.d/etc/" > /dev/null 2>&1 || true
     done
 
     # Step 2: Merge inside container -- one shot; the daemon is ready.
-    if run_compose exec -T captain emacsclient --eval \
+    if docker exec "$_mcp_cap" emacsclient --eval \
         "(progn (setenv \"SKEWED_CLONE_PATH\" \"${SCRIPT_DIR}\")
                 (load-file \"${_mcp_stage}/merge-mcp-configs.el\")
                 (skewed-merge-all-mcp-configs \"${_mcp_stage}\"))" \
         > /dev/null 2>&1
     then
-        log_success "MCP configurations merged for container CLI, Windows, Codex, and Grok"
+        log_success "Hailing frequencies posted for container CLI, Windows, Codex, and Grok"
 
         # Copy the platform-appropriate Claude Desktop config back to the
         # host clone (regression fix: the pre-POSIX compose-dev did this).
@@ -968,12 +1426,12 @@ merge_mcp_configs() {
         # its mcpServers key into ~/.claude.json.  Always the host form,
         # never the windows one -- Claude Code runs inside WSL, where
         # the wsl.exe wrapper the Desktop config needs would be wrong.
-        run_compose cp "captain:/tmp/merged-mcp-host.json" \
-            "${SCRIPT_DIR}/mcp/claude-code-mcp.json" 2>/dev/null \
+        docker cp "${_mcp_cap}:/tmp/merged-mcp-host.json" \
+            "${SCRIPT_DIR}/mcp/claude-code-mcp.json" > /dev/null 2>&1 \
             || log_warning "could not stage mcp/claude-code-mcp.json"
 
-        if run_compose cp "captain:${_cdc_src}" \
-            "${SCRIPT_DIR}/mcp/claude_desktop_config.json" 2>/dev/null; then
+        if docker cp "${_mcp_cap}:${_cdc_src}" \
+            "${SCRIPT_DIR}/mcp/claude_desktop_config.json" > /dev/null 2>&1; then
             log_success "Claude Desktop config ready: mcp/claude_desktop_config.json (see docs/CLAUDE_DESKTOP.md)"
         else
             log_warning "Could not copy Claude Desktop config from container"
@@ -1082,40 +1540,53 @@ crew_muster() {
     log_info "Crew muster:"
     _cm_have_pilot=0
     for _cm_svc in $_cm_services; do
-        _cm_cname="${BASILISK_PREFIX:-}${_cm_svc}"
-        # Roles come from the DECLARED posting label when there is one
-        # (a comma list -- no posting primary), from the service name
-        # for containers created before labels, via the SAME
-        # derivation minting uses (two tables, one truth: a private
-        # species->role copy here silently mustered every renamed post
-        # as "Crew" on a real deploy, 2026-08-16).  A container with
-        # NO posting at all is a STOWAWAY: a species specimen aboard,
-        # comprehended like anyone else, assigned nothing.
+        # The container name is the keeper's minted name now, so resolve
+        # it through compose (service -> container id -> name) rather
+        # than assuming prefix+service.  A room with nobody aboard shows
+        # under its bare type.
+        _cm_cid="$(room_container "$_cm_svc")"
+        if [ -n "$_cm_cid" ]; then
+            _cm_cname="$(docker inspect --format '{{.Name}}' "$_cm_cid" 2>/dev/null)"
+            _cm_cname="${_cm_cname#/}"
+        else
+            _cm_cname="${BASILISK_PREFIX:-}${_cm_svc}"
+        fi
+        # Titles come from the DECLARED posting label when there is
+        # one (a comma list -- no posting primary), from the service
+        # name for containers created before labels (a private
+        # species->title copy here silently mustered every renamed
+        # post as "Crew" on a real deploy, 2026-08-16 -- one table,
+        # one truth).  Posting-derived directly since 2026-08-24, so
+        # every posting on the books gets its own title (the Curator
+        # used to muster as "Crew" through the ROLE bottleneck).  A
+        # container with NO posting at all is a STOWAWAY: a species
+        # specimen aboard, comprehended like anyone else, assigned
+        # nothing.
         _cm_posts="$(docker inspect --format \
             '{{index .Config.Labels "basilisk.post"}}' \
             "$_cm_cname" 2>/dev/null)"
         if [ -n "$_cm_posts" ]; then
-            _cm_role="$(_crew_role_for_postings "$_cm_posts")"
+            _cm_post="$(_crew_title_for_postings "$_cm_posts")"
+            [ -n "$_cm_post" ] || _cm_post="${BASILISK_VOCAB_TITLE_CREW:-Crew}"
+            [ "$(_crew_role_for_postings "$_cm_posts")" = "pilot" ] && _cm_have_pilot=1
         else
-            _cm_role="$(_crew_role_for_posting "$_cm_svc")"
-            [ "$_cm_role" = "crew" ] && _cm_role="stowaway"
+            _cm_post="$(_crew_title_for_posting "$_cm_svc")"
+            [ -n "$_cm_post" ] || _cm_post="${BASILISK_VOCAB_TITLE_STOWAWAY:-Stowaway}"
+            [ "$(_crew_role_for_posting "$_cm_svc")" = "pilot" ] && _cm_have_pilot=1
         fi
-        # Display titles: canon's words as defaults, a fork's via the
-        # sourced vocabulary.
-        case "$_cm_role" in
-            captain)  _cm_post="${BASILISK_VOCAB_TITLE_CAPTAIN:-Captain}" ;;
-            pilot)    _cm_post="${BASILISK_VOCAB_TITLE_PILOT:-T-Chief}" ; _cm_have_pilot=1 ;;
-            engineer) _cm_post="${BASILISK_VOCAB_TITLE_ENGINEER:-Engineer}" ;;
-            comm)     _cm_post="${BASILISK_VOCAB_TITLE_COMM:-Comm}" ;;
-            doctor)   _cm_post="${BASILISK_VOCAB_TITLE_DOCTOR:-Medic}" ;;
-            stowaway) _cm_post="${BASILISK_VOCAB_TITLE_STOWAWAY:-Stowaway}" ;;
-            *)        _cm_post="${BASILISK_VOCAB_TITLE_CREW:-Crew}" ;;
-        esac
-        _cm_ports=$(docker ps --filter "name=^${BASILISK_PREFIX:-}${_cm_svc}\$" \
+        _cm_ports=$(docker ps --filter "name=^${_cm_cname}\$" \
                               --format '{{.Ports}}' 2>/dev/null \
                         | tr ',' '\n' | sed -n 's/.*0\.0\.0\.0:\([0-9]*\)->\([0-9]*\).*/\1->\2/p' \
                         | sort -u | tr '\n' ' ')
-        printf '  %-8s %-24s %s\n' "$_cm_post" "$_cm_svc" "${_cm_ports:-(no published ports)}"
+        # Rooms are known by their keepers: "Thweed's ready room".
+        _cm_keeper="${_cm_cname#${BASILISK_PREFIX:-}}"
+        _cm_room="$(printf '%s' "$_cm_svc" | tr '-' ' ')"
+        if [ "$_cm_keeper" = "$_cm_svc" ]; then
+            _cm_shown="$_cm_room (unkept)"
+        else
+            _cm_shown="${_cm_keeper}'s ${_cm_room}"
+        fi
+        printf '  %-8s %-30s %s\n' "$_cm_post" "$_cm_shown" "${_cm_ports:-(no published ports)}"
 
         # REQUIREMENTS vs CAPABILITIES (Dave, 2026-08-17).  A posting
         # states its requirements (basilisk.requires, emitted by the
@@ -1165,7 +1636,9 @@ crew_muster() {
     # but it has a consequence worth saying out loud.
     if [ "$_cm_have_pilot" -eq 0 ]; then
         log_warning "${BASILISK_VOCAB_NO_INGRESS_WARNING:-no Transporter Chief aboard: nothing fronts HTTP; publish ports directly}"
-        log_warning "  (if this ship is meant to have one, its overlay is missing:"
+        # Register-neutral machinery words only in this hint -- the
+        # line above it speaks whatever register the vocabulary loads.
+        log_warning "  (if one is intended here, the <host>-stack overlay is not installed:"
         log_warning "   run <host>-stack/install, which copies <host>-stack-compose.yml here)"
     fi
 }
@@ -1177,8 +1650,29 @@ validate_services() {
     VALIDATED_OK=""
     VALIDATED_FAILED=""
 
-    _vs_ids="$(run_compose ps -q 2>/dev/null)"
-    [ -n "$_vs_ids" ] || { log_warning "No running containers to validate"; return 0; }
+    _vs_err_tmp=$(mktemp)
+    _vs_ids="$(run_compose ps -q 2>"$_vs_err_tmp")"
+    if [ -z "$_vs_ids" ]; then
+        [ -s "$_vs_err_tmp" ] && log_warning "compose ps -q (validation) came back empty: $(head -1 "$_vs_err_tmp")"
+        _vs_net="$(ship_network)"
+        _vs_ids="$(docker ps -q ${_vs_net:+-f "network=${_vs_net}"} 2>/dev/null)"
+    fi
+    rm -f "$_vs_err_tmp"
+    if [ -z "$_vs_ids" ]; then
+        # A ship with no crew gets a LOUD flag either way: either the
+        # crew catastrophically failed to board (the muster went
+        # sideways -- read the compose output and journal above), or the
+        # owner is deliberately floating an empty ship for reasons only
+        # he would know.  Success is still reported -- an empty ship is
+        # not a failed one -- but never silently.
+        log_warning "=================================================================="
+        log_warning "SHIP IS CREWLESS: compose reports NO running containers."
+        log_warning "Either no one boarded (check the compose output and the journal"
+        log_warning "above) or she is deliberately riding empty at anchor."
+        log_warning "Nothing to validate; reporting success on an EMPTY ship."
+        log_warning "=================================================================="
+        return 0
+    fi
 
     # Build the watch list: containers that declare a usable healthcheck.
     _vs_watched=""
@@ -1190,10 +1684,24 @@ validate_services() {
             "$_vs_id" 2>/dev/null)"
         case "$_vs_test" in
             ""|NONE|"NONE "*)
-                log_info "  ${_vs_name}: started (no healthcheck; not validated)"
+                log_info "  $(_crew_display "$_vs_name"): started (no healthcheck; not validated)"
                 continue
                 ;;
         esac
+        # An UNHURRIED hand does not hold the gangway (the museum
+        # chamber's antique takes the better part of a minute to boot
+        # and light the plate).  He is started and left to warm up in
+        # the background; docker's own healthcheck still runs, the
+        # Doctor revives a boot that goes dark, and `./basilisk status`
+        # shows him healthy when the exhibit lights.  Without this,
+        # every raise held ~44s for the docent -- long enough for an
+        # anonymous visitor to conclude the ship is wedged.
+        if [ "$(docker inspect --format \
+                '{{index .Config.Labels "basilisk.unhurried"}}' \
+                "$_vs_id" 2>/dev/null)" = "true" ]; then
+            log_info "  $(_crew_display "$_vs_name"): warming up in the background (an unhurried hand; not gating the raise)"
+            continue
+        fi
         _vs_svc="$(docker inspect --format \
             '{{index .Config.Labels "com.docker.compose.service"}}' \
             "$_vs_id" 2>/dev/null)"
@@ -1206,7 +1714,26 @@ validate_services() {
         esac
         eval "_vs_svc_${_vs_san}=\$_vs_svc"
         eval "_vs_probe_cmd_${_vs_san}=\$_vs_probe_tmp"
-        eval "_vs_budget_${_vs_san}=\${HEALTH_BUDGET_${_vs_san}:-\$_vs_budget_default}"
+        # The keeper's display form ("Captain Thrilk in the Ready Room"),
+        # computed once here so the watch loop below never shells out.
+        _vs_disp="$(_crew_display "$_vs_name")"
+        eval "_vs_disp_${_vs_san}=\$_vs_disp"
+        # A hand whose healthcheck declares a start_period has stated
+        # its own warm-up (the museum chamber's antique machine takes a
+        # minute to boot and photograph itself); the budget honors it.
+        # An env override still wins; the default remains the floor.
+        # (StartPeriod renders as a Go duration ("2m0s"); .Seconds gives
+        # a plain number.)
+        _vs_sp_s="$(docker inspect --format \
+            '{{if .Config.Healthcheck}}{{.Config.Healthcheck.StartPeriod.Seconds}}{{end}}' \
+            "$_vs_id" 2>/dev/null)"
+        _vs_sp_s="${_vs_sp_s%.*}"
+        _vs_sp_budget="$_vs_budget_default"
+        case "$_vs_sp_s" in
+            ''|*[!0-9]*) : ;;
+            *) [ "$_vs_sp_s" -gt "$_vs_sp_budget" ] && _vs_sp_budget="$_vs_sp_s" ;;
+        esac
+        eval "_vs_budget_${_vs_san}=\${HEALTH_BUDGET_${_vs_san}:-\$_vs_sp_budget}"
         eval "_vs_state_${_vs_san}=pending"
         eval "_vs_elapsed_${_vs_san}=0"
         eval "_vs_tries_${_vs_san}=0"
@@ -1214,11 +1741,16 @@ validate_services() {
     done
     [ -n "$_vs_watched" ] || return 0
 
-    log_info "Validating services (probe every ${_vs_poll}s; kill+recreate on hung start):"
+    # One line states the watch for everyone; a hand is named here only
+    # when his stated warm-up buys him more than the standard budget.
+    log_info "The gangway watch: hailing each room every ${_vs_poll}s (${_vs_budget_default}s and ${_vs_retries_max} reliefs allowed apiece)"
     for _vs_name in $_vs_watched; do
         _vs_san="$(_vs_sanitize "$_vs_name")"
         eval "_vs_budget=\$_vs_budget_${_vs_san}"
-        log_info "  ${_vs_name}: budget ${_vs_budget}s, retries ${_vs_retries_max}"
+        if [ "$_vs_budget" != "$_vs_budget_default" ]; then
+            eval "_vs_disp=\$_vs_disp_${_vs_san}"
+            log_info "  ${_vs_disp:-$_vs_name}: allowed ${_vs_budget}s (stated warm-up)"
+        fi
     done
 
     _vs_total=0
@@ -1231,13 +1763,19 @@ validate_services() {
 
             if _vs_probe "$_vs_name"; then
                 eval "_vs_tries=\$_vs_tries_${_vs_san}"
+                eval "_vs_disp=\$_vs_disp_${_vs_san}"
                 if [ "$_vs_tries" -gt 0 ]; then
-                    log_success "  ${_vs_name}: validated at ${_vs_total}s (after ${_vs_tries} kill+recreate)"
+                    log_success "  ${_vs_disp:-$_vs_name}: validated at ${_vs_total}s (after ${_vs_tries} kill+recreate)"
                 else
-                    log_success "  ${_vs_name}: validated at ${_vs_total}s"
+                    log_success "  ${_vs_disp:-$_vs_name}: validated at ${_vs_total}s"
                 fi
                 eval "_vs_state_${_vs_san}=ok"
-                VALIDATED_OK="${VALIDATED_OK:+$VALIDATED_OK }$_vs_name"
+                # VALIDATED_OK carries SERVICE names (the room slugs):
+                # container names are minted per-muster now, so a later
+                # phase checking for the ready-room must not have to
+                # know who keeps it this tour.
+                eval "_vs_okname=\$_vs_svc_${_vs_san}"
+                VALIDATED_OK="${VALIDATED_OK:+$VALIDATED_OK }${_vs_okname:-$_vs_name}"
                 continue
             fi
 
@@ -1270,7 +1808,7 @@ validate_services() {
     done
 
     if [ -z "$VALIDATED_FAILED" ]; then
-        log_success "All services validated in ${_vs_total}s"
+        log_success "All hands validated in ${_vs_total}s; the ship is away"
         crew_muster
         return 0
     fi
@@ -1299,23 +1837,27 @@ show_status() {
 }
 
 connect_emacs() {
-    log_info "Connecting to Emacs via emacsclient"
-    run_compose exec captain emacsclient -t
+    log_info "Connecting to Emacs via emacsclient (the ready room)"
+    _ce_cap="$(room_container ready-room)"
+    if [ -n "$_ce_cap" ]; then
+        docker exec -it "$_ce_cap" emacsclient -t
+    else
+        log_error "no keeper found for the ready room -- is the ship up?"
+        return 1
+    fi
 }
 
 pull_images() {
     if [ -n "${NO_PULL}" ]; then
-        log_info "Skipping pull (NO_PULL set)"
+        log_info "Skipping pull (NO_PULL set; explicit './basilisk pull' or 'up --pull' overrides)"
         return
     fi
 
     if [ -n "${PULL_ALWAYS}" ]; then
-        log_info "Pulling latest images (PULL_ALWAYS set)"
+        log_info "Beaming the whole complement aboard fresh (PULL_ALWAYS set)"
         run_compose pull
         return
     fi
-
-    log_info "Pulling missing images only"
 
     _svc_img_pairs="$(
         run_compose config | awk '
@@ -1330,9 +1872,9 @@ pull_images() {
     _missing=""
     while IFS=" " read -r _svc _img; do
         [ -z "$_svc" ] || [ -z "$_img" ] && continue
-        if docker image inspect "$_img" > /dev/null 2>&1; then
-            log_info "Image present locally, skipping pull: $_svc ($_img)"
-        else
+        # A hand already onboard warrants no line of his own; only the
+        # ones who need the transporter get named below.
+        if ! docker image inspect "$_img" > /dev/null 2>&1; then
             _missing="${_missing:+$_missing }$_svc"
         fi
     done << _PAIRS
@@ -1340,11 +1882,11 @@ $_svc_img_pairs
 _PAIRS
 
     if [ -z "$_missing" ]; then
-        log_success "All images present locally; skipping pull"
+        log_success "All crew already onboard, nobody to be beamed aboard"
         return
     fi
 
-    log_info "Pulling missing services: $_missing"
+    log_info "Beaming aboard: $_missing"
     # shellcheck disable=SC2086  (word-split intentional: service names)
     run_compose pull $_missing
 }
@@ -1357,6 +1899,7 @@ clean_all() {
         [Yy]*)
             log_info "Cleaning up..."
             run_compose down --rmi all --volumes --remove-orphans
+            release_ship
             docker system prune -f
             log_success "Cleanup complete"
             ;;
@@ -1380,7 +1923,18 @@ show_config() {
 # =============================================================================
 install_shell_functions() {
     _isf_dir="${HOME}/.config/skewed-emacs"
-    _isf_file="${_isf_dir}/shell-functions.sh"
+    # A fork's vocabulary may rename the hailing calls (the yard's own
+    # words are rmax/grmax).  Renamed calls get their OWN helpers file,
+    # so a canon stack and a fork sharing one box do not overwrite each
+    # other's -- both files source cleanly side by side, each defining
+    # its own call names.
+    _isf_term="${BASILISK_VOCAB_HAIL_TERM:-rmax}"
+    _isf_gui="${BASILISK_VOCAB_HAIL_GUI:-grmax}"
+    if [ "$_isf_term" != "rmax" ] || [ "$_isf_gui" != "grmax" ]; then
+        _isf_file="${_isf_dir}/shell-functions-${_isf_term}.sh"
+    else
+        _isf_file="${_isf_dir}/shell-functions.sh"
+    fi
     SHELL_HELPERS_CHANGED=false
 
     mkdir -p "${_isf_dir}"
@@ -1388,19 +1942,29 @@ install_shell_functions() {
 
     # The snippet is pure POSIX sh -- works when sourced from any shell.
     cat > "${_isf_tmp}" << 'SNIPPET'
-# Skewed Emacs shell helpers - auto-generated by compose-dev
+# Readymax shell helpers - auto-generated by compose-dev
 # Works in bash, zsh, sh, or any POSIX-compatible shell.
 
-# Both helpers are `docker exec` into the Captain's container.  A box may
+# Every helper is a `docker exec` into the Captain's container.  A box may
 # legitimately be running a hull with no Captain aboard -- a minimal
 # roster, or a standalone Cyclops or KBE-server deployment -- and in that
-# case docker's own "No such container: skewed-emacs" says nothing about
-# what is actually going on.  Answer in the ship's own terms.
-# Which Captain?  With more than one Basilisk on a box, container names
-# carry the instance prefix, so reach another instance's Emacs with:
-#     BASILISK_PREFIX=alpha- eskew
-# Unset, this is exactly the historical "skewed-emacs".
-_skew_captain() { printf '%s%s' "${BASILISK_PREFIX:-}" "${BASILISK_CAPTAIN:-captain}"; }
+# case docker's own "No such container" says nothing about what is
+# actually going on.  Answer in the ship's own terms.
+# The container name is the ready room keeper's MINTED name (it changes
+# at each relief), so it is read off the standing muster roll in the
+# basilisk clone this helper was generated from.  BASILISK_CAPTAIN
+# overrides for an exotic rig; with more than one Basilisk on a box,
+# container names carry the instance prefix, derived from the instance
+# label the same way compose-dev derives it -- name the ship you mean
+# with a leading @-arg, or the env var:
+#     rmax @alpha my-proj.lisp
+#     BASILISK_INSTANCE=alpha rmax my-proj.lisp
+_skew_captain() {
+    _sc_prefix="${BASILISK_PREFIX:-${BASILISK_INSTANCE:+$BASILISK_INSTANCE-}}"
+    _sc_roll="@BASILISK_DIR@/.muster${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
+    _sc_name="${BASILISK_CAPTAIN:-$(sed -n 's/^BASILISK_CREW_READY_ROOM=//p' "$_sc_roll" 2>/dev/null | head -1)}"
+    printf '%s%s' "$_sc_prefix" "${_sc_name:-ready-room}"
+}
 
 _skew_captain_aboard() {
     command -v docker >/dev/null 2>&1 || return 1
@@ -1417,18 +1981,20 @@ _skew_no_captain() {
     else
         printf '%s: no Captain aboard this ship (no "%s" container).\n' "$1" "$_snc_name" >&2
         printf '  Bring one aboard:  ./basilisk up\n' >&2
-        printf '  Another instance?  BASILISK_PREFIX=<name>- %s\n' "$1" >&2
+        printf '  Another ship on this box?  %s @<instance>\n' "$1" >&2
     fi
     return 1
 }
 
-eskew() {
-    _skew_captain_aboard || { _skew_no_captain eskew; return 1; }
+_rmax_term() {
+    _rt_call="$1"; shift
+    _skew_captain_aboard || { _skew_no_captain "$_rt_call"; return 1; }
     docker exec -it --detach-keys "ctrl-^" "$(_skew_captain)" emacsclient -t "$@"
 }
 
-egskew() {
-    _skew_captain_aboard || { _skew_no_captain egskew; return 1; }
+_rmax_gui() {
+    _rg_call="$1"; shift
+    _skew_captain_aboard || { _skew_no_captain "$_rg_call"; return 1; }
     if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
         docker exec -i -e DISPLAY="$DISPLAY" -e WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
             --detach-keys "ctrl-^" "$(_skew_captain)" emacsclient -c "$@" &
@@ -1436,11 +2002,60 @@ egskew() {
         docker exec -it --detach-keys "ctrl-^" "$(_skew_captain)" emacsclient -t "$@"
     fi
 }
+
+# rmax [@instance] [emacsclient args...] -- hail the Captain in your
+# current terminal.  A leading @-arg names the instance when several
+# ships share the box (a filename genuinely starting with @ can hide
+# behind ./).  The subshell keeps the per-call choice out of the
+# caller's environment, and an explicit @ outranks any ambient
+# BASILISK_PREFIX/BASILISK_CAPTAIN override.
+rmax() {
+    case "$1" in
+        @?*) _rmx_i="${1#@}"; shift
+             ( BASILISK_INSTANCE="$_rmx_i"; export BASILISK_INSTANCE
+               unset BASILISK_PREFIX BASILISK_CAPTAIN
+               _rmax_term rmax "$@" ) ;;
+        *)   _rmax_term rmax "$@" ;;
+    esac
+}
+
+# grmax [@instance] [emacsclient args...] -- the Captain receives you in
+# a new window (graphical emacsclient; falls back to a terminal
+# attach when no display is present).
+grmax() {
+    case "$1" in
+        @?*) _grx_i="${1#@}"; shift
+             ( BASILISK_INSTANCE="$_grx_i"; export BASILISK_INSTANCE
+               unset BASILISK_PREFIX BASILISK_CAPTAIN
+               _rmax_gui grmax "$@" ) ;;
+        *)   _rmax_gui grmax "$@" ;;
+    esac
+}
+
+# The long-serving hailing calls stay aboard as aliases for rmax/grmax.
+eskew()  { rmax "$@"; }
+egskew() { grmax "$@"; }
 SNIPPET
+
+    # The snippet heredoc is quoted (no interpolation at write time), so
+    # the clone's own path rides in via a placeholder: the helpers must
+    # find THIS clone's muster roll from any shell, anywhere.
+    sed "s|@BASILISK_DIR@|${SCRIPT_DIR}|g" "${_isf_tmp}" > "${_isf_tmp}.sub" \
+        && mv "${_isf_tmp}.sub" "${_isf_tmp}"
+
+    # The rename itself: shipped code stays verbatim -- it is a
+    # generated-file substitution, like the clone path above.  Both
+    # calls tokenize before either expands, so the shorter word never
+    # bites a piece out of the longer one (grmax contains rmax).
+    if [ "$_isf_term" != "rmax" ] || [ "$_isf_gui" != "grmax" ]; then
+        sed "s|grmax|@HAIL_GUI@|g; s|rmax|@HAIL_TERM@|g; s|@HAIL_GUI@|${_isf_gui}|g; s|@HAIL_TERM@|${_isf_term}|g" \
+            "${_isf_tmp}" > "${_isf_tmp}.sub" \
+            && mv "${_isf_tmp}.sub" "${_isf_tmp}"
+    fi
 
     if [ -f "${_isf_file}" ] && cmp -s "${_isf_tmp}" "${_isf_file}"; then
         rm -f "${_isf_tmp}"
-        log_info "Shell functions already up to date in ${_isf_file}"
+        # already current -- a no-change earns no line
     else
         mv "${_isf_tmp}" "${_isf_file}"
         SHELL_HELPERS_CHANGED=true
@@ -1466,14 +2081,19 @@ SNIPPET
 
     _isf_wrote=false
     _isf_wrote_files=""
-    # Write to primary, .bashrc, and .profile always; .bash_profile / .zprofile if they exist
+    _isf_seen=""
+    # Write to primary, .bashrc, and .profile always; .bash_profile / .zprofile if they exist.
+    # The primary is usually one of the fixed entries, so dedupe -- it
+    # used to earn .bashrc two identical "already in" lines per raise.
     for _isf_rc in "$_isf_primary" "${HOME}/.bashrc" "${HOME}/.profile" \
                    "${HOME}/.bash_profile" "${HOME}/.zprofile"; do
         [ -f "$_isf_rc" ] || continue
-        if grep -qF "skewed-emacs/shell-functions.sh" "$_isf_rc" 2>/dev/null; then
-            log_info "Shell helpers already in ${_isf_rc} (no change needed)"
+        case " $_isf_seen " in *" $_isf_rc "*) continue ;; esac
+        _isf_seen="$_isf_seen $_isf_rc"
+        if grep -qF "skewed-emacs/$(basename "$_isf_file")" "$_isf_rc" 2>/dev/null; then
+            :  # already rigged -- a no-change earns no line
         else
-            printf '\n# Skewed Emacs shell helpers\n%s\n' "$_isf_source_line" >> "$_isf_rc"
+            printf '\n# Readymax shell helpers\n%s\n' "$_isf_source_line" >> "$_isf_rc"
             log_success "Added skewed-emacs shell helpers to ${_isf_rc}"
             _isf_wrote=true
             _isf_wrote_files="${_isf_wrote_files:+${_isf_wrote_files}, }${_isf_rc}"
@@ -1483,12 +2103,14 @@ SNIPPET
 
     if [ "$_isf_wrote" = "true" ]; then
         log_info "Helpers wired into: ${_isf_wrote_files}"
-        log_info "Open a new terminal (or run:  . ${_isf_file}  ) to activate eskew/egskew"
+        log_info "Open a new terminal (or run:  . ${_isf_file}  ) to activate ${BASILISK_VOCAB_HAIL_TERM:-rmax}/${BASILISK_VOCAB_HAIL_GUI:-grmax}"
     fi
 }
 
 refresh_emacs_runtime_config() {
-    _refresh_result="$(run_compose exec -T captain emacsclient --eval \
+    _rerc_cap="$(room_container ready-room)"
+    [ -n "$_rerc_cap" ] || { log_warning "no keeper for the ready room; skipping Emacs service refresh"; return 0; }
+    _refresh_result="$(docker exec "$_rerc_cap" emacsclient --eval \
         "(progn
             (defvar skewed-runtime-services-refresh-armed nil)
             (defvar skewed-runtime-services-refresh-done nil)
@@ -1532,11 +2154,16 @@ show_skew_welcome() {
     echo ""
     echo "Shell Commands for the Basilisk Stack"
     echo ""
-    printf "%b\n" "  \`eskew\`  ${BLUE}-- terminal emacsclient (attach in current terminal)${NC}"
-    printf "%b\n" "  \`egskew\` ${BLUE}-- graphical emacsclient (opens new window)${NC}"
+    _ssw_term="${BASILISK_VOCAB_HAIL_TERM:-rmax}"
+    _ssw_gui="${BASILISK_VOCAB_HAIL_GUI:-grmax}"
+    printf "%b\n" "  \`${_ssw_term}\`   ${BLUE}-- hail the Captain: terminal emacsclient (attach here)${NC}"
+    printf "%b\n" "  \`${_ssw_gui}\`  ${BLUE}-- graphical emacsclient (opens new window)${NC}"
+    printf "%b\n" "  \`${_ssw_term} @<instance>\` ${BLUE}-- reach another ship on this box${NC}"
+    printf "%b\n" "  ${BLUE}(\`eskew\`/\`egskew\` stay aboard as aliases)${NC}"
     echo ""
     echo "NOTE: Please exit this shell with Ctrl-D before doing './basilisk down'."
-    echo "      (A down + up is a relief in place: same ship, all-new crew.)"
+    echo "      (The next bare 'up' raises a NEW ship: the old one is buried"
+    echo "      under his own name in the log of ships, crew and all.)"
     echo ""
 }
 
@@ -1603,6 +2230,14 @@ main() {
 
     check_docker_compose
 
+    # Re-export the standing muster roll for EVERY command: compose
+    # interpolates container_name from BASILISK_CREW_* on any invocation
+    # that might create a container (a kill+recreate during `restart'
+    # validation, say), and an unset var would quietly rename the hand
+    # to the bare module slug.  `up' refreshes the roll itself via
+    # muster_crew; everything else sails on the roll as it stands.
+    muster_load
+
     case "${1:-help}" in
         up)
             shift
@@ -1611,7 +2246,12 @@ main() {
             for _up_arg in "$@"; do
                 case "$_up_arg" in
                     --daemon|-d) _up_daemon=true ;;
-                    --pull)      PULL_ALWAYS=1 ;;
+                    # The operator's explicit order outranks the
+                    # standing one: --pull clears NO_PULL (which
+                    # host.env may set on a provisioned ship), or the
+                    # documented deploy step `up --pull' would silently
+                    # stop pulling on exactly the ships it matters for.
+                    --pull)      PULL_ALWAYS=1; NO_PULL="" ;;
                     *)           _up_remaining="${_up_remaining:+$_up_remaining }$_up_arg" ;;
                 esac
             done
@@ -1623,6 +2263,14 @@ main() {
                 install_shell_functions
                 if [ "$SHELL_HELPERS_CHANGED" = "true" ]; then
                     show_skew_welcome
+                    # Close the slipway before handing over: exec
+                    # replaces this process with the welcome shell,
+                    # which would otherwise inherit fd 9 -- and the
+                    # flock with it -- for the life of the operator's
+                    # session, blocking every later raise (found live,
+                    # 2026-08-24: an eskew attach held the slipway for
+                    # 18 minutes).
+                    exec 9>&- 2>/dev/null || true
                     exec "${SHELL:-sh}" -i
                 fi
             fi
@@ -1636,7 +2284,10 @@ main() {
         logs)   shift; show_logs "$@" ;;
         status|ps) show_status ;;
         emacs)  connect_emacs ;;
-        pull)   pull_images ;;
+        # Typing `pull' IS the explicit request, so it too outranks a
+        # host.env NO_PULL -- a provisioned ship still takes on stores
+        # when told to.
+        pull)   NO_PULL=""; pull_images ;;
         clean)  clean_all ;;
         install-shell-functions) install_shell_functions ;;
         init)

@@ -11,9 +11,15 @@
 [Unit]
 Description=Basilisk container stack (Emacs, Lisp engines, Cyclops, autoheal)
 Documentation=https://gitlab.genworks.com/gornskew/basilisk
-After=docker.service network-online.target
+# No network-online.target here, on purpose: boot needs no egress by
+# design (images are sealed; ./basilisk up pulls only images MISSING
+# locally), so an airgapped box must not stall behind a wait-online
+# timeout.  Cold-box installs still get their pulls: stock docker.service
+# itself Wants/After network-online.target, and we order after docker --
+# and Restart=on-failure below retries the rare race where a needed pull
+# beats the network anyway.
+After=docker.service
 Requires=docker.service network.target
-Wants=network-online.target
 # Companion, not a dependency: the stack comes up whether or not the
 # watchdog timer is installed.
 Wants=basilisk-watchdog.timer

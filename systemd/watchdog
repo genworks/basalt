@@ -56,7 +56,11 @@ BACKOFF_SECS="${BASILISK_WATCHDOG_BACKOFF:-1800}"
 #
 # Defaulted through BASILISK_CAPTAIN so this agrees with mcp/mcp-exec, which
 # resolves the same service the same way.  One name, one default.
-CAPTAIN="${BASILISK_WATCHDOG_CAPTAIN:-${BASILISK_CAPTAIN:-captain}}"
+# Both now read the crew ledger first: BASILISK_POST_CAPTAIN_ROOM in
+# generated/crew.env names the console service's slug, so a fork whose
+# console carries its own hostname is watched under that name.
+_ledger_room="$(sed -n 's/^BASILISK_POST_CAPTAIN_ROOM=//p' "${BASILISK_DIR}/generated/crew.env" 2>/dev/null | head -1)"
+CAPTAIN="${BASILISK_WATCHDOG_CAPTAIN:-${BASILISK_CAPTAIN:-${_ledger_room:-ready-room}}}"
 CAPTAIN_PROBE="${BASILISK_WATCHDOG_PROBE:-http://localhost:7080/lisply/ping-lisp}"
 
 DRY=0
@@ -151,9 +155,16 @@ if [ "$DRY" -eq 1 ]; then
 fi
 
 if [ "$fault" = "ship" ]; then
-    log "recovering ship: ${detail} -- ./basilisk up -d"
-    ./basilisk up -d || log "up failed"
+    # Rouse ONLY the missing rooms: a module-scoped up works on the
+    # STANDING ship.  A bare `up` would be a new raising -- fresh ship,
+    # fresh name, whole complement relieved (per-raising minting,
+    # 2026-08-24) -- which is no way to relight one dark room.
+    log "recovering ship: ${detail} -- ./basilisk up -d${missing}"
+    # shellcheck disable=SC2086  (word-split intentional: service names)
+    ./basilisk up -d $missing || log "up failed"
 else
+    # The wedged ship dies with his wedge: down buries him, and the
+    # up raises a new ship under a new name.
     log "recovering fleet: ${detail} -- ./basilisk down then up -d"
     ./basilisk down || log "down failed"
     ./basilisk up -d || log "up failed"

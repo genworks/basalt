@@ -30,9 +30,13 @@ cd basalt
 ```
 
 Images are pulled as needed, services start and are health-validated
-one by one, and the deployment comes up under a generated name —
-assigned on first start, kept in `.ship`, and used as the name of the
-Docker network all services join.
+one by one, and the deployment comes up under a generated name — a
+fresh one at every full `up`, kept in `.ship` and used as the name of
+the Docker network all services join, with the previous name retired
+into `.ships-log`. Containers likewise carry generated **instance
+names**, recorded in `.muster`; `up <service>` and `restart` act on
+the standing deployment without renaming anything. Read the current
+names from those files rather than remembering them.
 
 If you have a `~/projects/` directory it is bind-mounted at
 `/projects` in every container, and created if missing. To mount a
@@ -45,8 +49,9 @@ PROJECTS_DIR=/path/to/projects ./basalt up
 
 A first `up` also makes a few deliberate changes on the host:
 
-- `eskew` and `egskew` become shell commands — they connect you to
-  the console (see *Connecting*, below).
+- `rmacs` and `grmacs` become shell commands — they connect you to
+  the console (see *Connecting*, below; the long-serving `eskew` and
+  `egskew` remain as aliases).
 - Placeholder credential files are created under `~/.claude/`,
   `~/.gemini/`, `~/.codex/` and `~/.grok/` where missing, so the
   console's file mounts resolve cleanly.
@@ -72,7 +77,7 @@ A first `up` also makes a few deliberate changes on the host:
 | `emacs` | attach an emacsclient terminal to the console |
 | `pull` | pull missing images (`PULL_ALWAYS=1` for latest) |
 | `config` | show the merged compose configuration |
-| `install-shell-functions` | (re)write the `eskew`/`egskew` helpers |
+| `install-shell-functions` | (re)write the `rmacs`/`grmacs` helpers |
 | `clean` | remove containers, networks, and images — asks first |
 
 Variant switches (`--lite`, `--default`, `--tui`, `--gui`, `--full`)
@@ -106,11 +111,11 @@ BASILISK_INSTANCE=alpha BASILISK_PORT_OFFSET=100 ./basalt up
 ```
 
 Each instance gets its own generated name, network, and ports.
-Within any instance the services keep their canonical hostnames —
-`captain` resolves to that instance's console — so nothing configured
+Within any instance the services keep their declared hostnames —
+`console` resolves to that instance's console — so nothing configured
 against a service name needs to know which instance it runs in. To
-reach a second instance's console from the host, prefix the command:
-`BASILISK_PREFIX=alpha- eskew`.
+reach a second instance's console from the host, name it with a
+leading @-argument: `rmacs @alpha`.
 
 
 ## Connecting
@@ -119,12 +124,13 @@ Ways in for a human user:
 
 | way in | how |
 |---|---|
-| `eskew` | the console, in your current terminal |
-| `egskew` | the console in a graphical frame (falls back to the terminal without a display) |
+| `rmacs` | the console, in your current terminal |
+| `grmacs` | the console in a graphical frame (falls back to the terminal without a display) |
 | the web terminal | a terminal in your browser: `http://localhost:6942` |
 | `./basalt emacs` | the console, without the shell helpers |
 
-Detach from `eskew`/`egskew` with `ctrl-^`.
+Detach from `rmacs`/`grmacs` with `ctrl-^` (`eskew`/`egskew` remain
+as aliases for both).
 
 
 ## MCP clients
@@ -145,7 +151,7 @@ same services an outside client would. The `lite` variant carries
 none; outside clients work identically either way. Which agents, and
 where each keeps its configuration, are documented with the image:
 see
-[skewed-emacs/docker/README.md](https://github.com/gornskew/skewed-emacs/blob/devo/docker/README.md).
+[readymacs/docker/README.md](https://gitlab.genworks.com/genworks/readymacs/-/blob/devo/docker/README.md).
 
 Every entry in these registries connects directly to the service it
 names, with no intermediary gate: treat issuing them as issuing an
@@ -184,7 +190,7 @@ Generated outputs include, among others:
 | `docker-compose.yml` | the compose configuration the deployment runs from |
 | `mcp/mcp*.json`, `mcp/mcp.toml` | MCP client registries |
 | `generated/services-generated.el` | the console's copy of the service inventory |
-| `generated/crew.env` | the **service ledger**: each role, and the service filling it |
+| `generated/crew.env` | the **service ledger**: each role, the hostname of the service filling it, and that service's declared ports |
 | `generated/vocabulary.env` | display strings for startup and status output |
 
 The generated files are outputs. Never edit them directly; edit the
@@ -226,9 +232,14 @@ directory. Re-run *both* the generation and `./install` after every
 configuration edit.
 
 Configuration that must name other services — an ingress's routing
-rules, a services-init hook — names a **role**
-(`${BASILISK_POST_CAPTAIN}` and kin), resolved against the service
-ledger at start time, so the rules survive service renames.
+rules, a services-init hook — names a **role and a port**:
+`${BASILISK_POST_CAPTAIN_ROOM}` is the hostname of the service
+filling the console role, `${BASILISK_POST_CAPTAIN_HTTP_PORT}` that
+service's declared HTTP port, and so on per role and port name. Both
+resolve against the service ledger at start time, so routing rules
+survive service renames and the configuration's declared ports stay
+the single source of truth — no literal hostnames or ports belong in
+any template.
 
 **Bringing your own image** is not a special case: a stack repository
 whose configuration adds one more service. It joins the deployment's

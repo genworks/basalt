@@ -24,6 +24,7 @@
 ;;;   - mcp/mcp-windows.json       (for Claude Desktop on Windows via WSL)
 ;;;   - mcp/mcp.toml               (for Codex CLI and Grok CLI)
 ;;;   - generated/services-generated.el
+;;;   - generated/vocabulary.env   (from glossary.sexp :vocabulary)
 ;;;
 ;;; DO NOT EDIT the generated files directly.
 ;;;
@@ -37,7 +38,7 @@
 ;;; The console image ships in several variants (devo-full,
 ;;; devo-default, devo-lite, ...): the variant is the tag half of the
 ;;; image reference, so the build variant is already part of the image
-;;; designation.  docker/BUILD.md in skewed-emacs carries the detail;
+;;; designation.  docker/BUILD.md in readymacs carries the detail;
 ;;; EMACS_IMAGE_VARIANT in .env (or a --lite/--full switch) picks the
 ;;; variant a host runs, and this dev stack defaults to full.
 
@@ -58,7 +59,7 @@
   :network-ipv4-subnet "172.21.0.0/16"
   :network-ipv6-subnet "fd00:ba5a::/80")
 
- ;; How MCP clients connect: the lisply-mcp wrapper that every service
+ ;; How MCP clients connect: the lisply-mcp receiver that every service
  ;; with :mcp enabled answers through.
  :mcp-wrapper
  (:wrapper-path-container "/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js"
@@ -79,39 +80,52 @@
  ;; manifest, so they are quoted verbatim from the upstream images and
  ;; are not translated here.
  :roles
- (;; A skewed-emacs console is recommended, not required -- the
+ (;; A readymacs console is recommended, not required -- the
   ;; qualification scheme says exactly that: a console from another
-  ;; image starts with a warning and proceeds.
-  (:role :console :requires ("skewed-emacs"))
+  ;; image starts with a warning and proceeds.  (The upstream console
+  ;; images declare the "readymax" capability token, so that is the
+  ;; verbatim string matched here; images through the rename
+  ;; transition also carry the elder "skewed-emacs" token.)
+  (:role :console :requires ("readymax"))
   (:role :front-line
    :description "Front-line interactive service: assists the console and its users."
    :requires ("gendl"))
   (:role :engineering :requires ("gendl"))
   (:role :ingress :requires ("reverse-proxy"))
+  ;; The dashboard role comes with no service in the base set -- its
+  ;; requirements are stated, and a service to fill it arrives by
+  ;; stack repository.
   (:role :dashboard
    :description "Runs the monitoring dashboard; polls the fleet."
    :requires ("bridge viewscreen operations")))
 
  :services
  (
-  ;; NAMES ARE ROLES, not images.  :name becomes the compose service
-  ;; name, the container_name and the hostname; the IMAGE is the full
-  ;; registry reference; and a per-container identity is written into
-  ;; the container at up-time.
+  ;; SERVICE KEYS ARE HOSTNAMES; CONTAINERS TAKE INSTANCE NAMES.  Each
+  ;; entry names its :hostname -- the plain service word that becomes
+  ;; the compose service key, the in-network hostname, and the MCP
+  ;; server name (console, front-line, engineering, monitor).  The
+  ;; CONTAINER NAME is a generated instance name, assigned at startup
+  ;; and persisted in .muster -- so a recreate under a fresh name is
+  ;; exactly that: a fresh instance, same service.  The image is
+  ;; stated as :registry-namespace (where it comes from) plus :image
+  ;; (repo:tag -- the tag half carrying the build variant).
   ;;
   ;; ONLY :image IS REQUIRED of a service entry.  :name is the
-  ;; author's slug and optional: absent, it derives from the roles
-  ;; filled (hyphen-joined), or, for an image deployed with NO
-  ;; assigned role -- entered on the roster as unassigned -- as
-  ;; unassigned-<repo>, the prefix making one obvious from its name
-  ;; alone.  :role is only needed when capabilities are expected of
-  ;; the service.  No entry below states a :name: every service
-  ;; answers to the hostname derived from its role.
+  ;; author's slug and optional: absent, it derives from :hostname,
+  ;; else from the roles filled (hyphen-joined), or, for an image
+  ;; deployed with NO assigned role -- entered on the roster as
+  ;; unassigned -- as unassigned-<repo>, the prefix making one obvious
+  ;; from its name alone.  :registry-namespace is only needed off
+  ;; Docker Hub's library; :role only when capabilities are expected
+  ;; of the service.
   (:role :console
+   :hostname "console"
    :description "The interactive control console, and the longest-lived process in the stack."
    :type "emacs-lisp"
    :mcp t
-   :image "gornskew/${EMACS_IMAGE_BASE:-skewed-emacs}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}"
+   :registry-namespace "gornskew"
+   :image "${EMACS_IMAGE_BASE:-readymax}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}"
    :ports ((:name "http" :container 7080)
            (:name "webterm" :container 6942 :host ${TTYD_HOST_PORT:-6942}))
    :environment (("WEBTERM" . "${WEBTERM:-ttyd}")
@@ -143,9 +157,8 @@
    ;; outside the stack, the console is sampled through that
    ;; deployment's own gendl-ccl proxy (publish-emacs-metrics!),
    ;; which is gated.
-   :probe (:tile "heap skewed-emacs"
-           :in-stack (:kind :emacs
-                      :url "http://captain:7080/lisply/lisp-eval"
+   :probe (:in-stack (:kind :emacs
+                      :url "http://console:7080/lisply/lisp-eval"
                       :alert-mb 2000)
            :remote (:kind :metrics
                     :path "/eyes-only-metrics/skewed-emacs"
@@ -158,9 +171,11 @@
   ;; GUARANTEES it -- the role states the duty, the image states the
   ;; software.
   (:role :front-line
+   :hostname "front-line"
    :description "Front-line interactive service: assists the console and its users."
    :type "common-lisp"
-   :image "gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-ccl"
+   :registry-namespace "gornskew"
+   :image "${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-ccl"
    :ports ((:name "http" :host ${GENDL_CCL_HOST_PORT:-19080} :container 9080)
            (:name "swank" :container 4200))
    :mcp t
@@ -169,17 +184,18 @@
    ;; publishes nothing, so there is no tile to ask for.  No
    ;; :in-stack form either -- a local dashboard samples its own
    ;; deployment's image without a probe entry.
-   :probe (:tile "heap gendl-ccl"
-           :remote (:kind :metrics
+   :probe (:remote (:kind :metrics
                     :path "/eyes-only-metrics/gendl-ccl"
                     :alert-mb 1200))
    :healthcheck (:endpoint "/lisply/ping-lisp" :interval "72s"))
 
   ;; The engineering service: the gendl sbcl variant.
   (:role :engineering
+   :hostname "engineering"
    :description "The engineering service: computation and geometry for the stack and its users."
    :type "common-lisp"
-   :image "gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-sbcl"
+   :registry-namespace "gornskew"
+   :image "${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-sbcl"
    :ports ((:name "http" :host ${GENDL_SBCL_HOST_PORT:-29080} :container 9090)
            (:name "swank" :container 4210))
    :mcp t
@@ -192,9 +208,11 @@
   ;; the affected process.  The monitor restarts ANY service that
   ;; fails its healthcheck.
   (:role :monitor
+   :hostname "monitor"
    :description "Watches for hung services and restarts them."
    :type "utility"
-   :image "willfarrell/autoheal:latest"
+   :registry-namespace "willfarrell"
+   :image "autoheal:latest"
    :environment (("AUTOHEAL_CONTAINER_LABEL" . "all")
                  ("AUTOHEAL_INTERVAL" . "15")
                  ("AUTOHEAL_START_PERIOD" . "60"))

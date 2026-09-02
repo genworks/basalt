@@ -1,42 +1,42 @@
 // DO NOT EDIT - Generated from basalt.sexp
 {
   "mcpServers": {
-    "captain": {
+    "console": {
       "command": "node",
       "args": [
         "/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js",
         "--server-name",
-        "captain",
+        "console",
         "--backend-host",
-        "captain",
+        "console",
         "--http-port",
         "7080",
         "--request-timeout-ms",
         "30000"
       ]
     },
-    "first-officer": {
+    "front-line": {
       "command": "node",
       "args": [
         "/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js",
         "--server-name",
-        "first-officer",
+        "front-line",
         "--backend-host",
-        "first-officer",
+        "front-line",
         "--http-port",
         "9080",
         "--request-timeout-ms",
         "30000"
       ]
     },
-    "engineer": {
+    "engineering": {
       "command": "node",
       "args": [
         "/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js",
         "--server-name",
-        "engineer",
+        "engineering",
         "--backend-host",
-        "engineer",
+        "engineering",
         "--http-port",
         "9090",
         "--request-timeout-ms",

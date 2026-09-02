@@ -4,8 +4,11 @@
 assembled by generation from one declared configuration. Deployments
 come in many shapes and sizes; the standard one runs an interactive
 **console**, two **engine services**, and a **monitor**, together on
-one host. A deployment receives a generated name at first start and
-keeps it; the Docker network its services join carries that name.
+one host. A deployment receives a generated name at every full start
+— the previous name is retired into a log, never reused — and the
+Docker network its services join carries the current name.
+Single-service starts and restarts act on the standing deployment
+without renaming anything.
 
 This document describes the architecture which, followed faithfully
 by the build tooling, produces a standard Basalt deployment. The
@@ -58,9 +61,12 @@ Every service is listed in the configuration, and only one thing must
 be stated about each: the **image**. Everything else can be left to
 the tooling's defaults.
 
-- A service assigned a role answers to a hostname derived from its
-  role or roles — `captain`, `engineer`, perhaps `engineer-2` for
-  multiples.
+- A service answers to its **declared hostname** — a plain service
+  word stated in the configuration (`console`, `front-line`,
+  `engineering`, `monitor`), which becomes the compose service key,
+  the in-network hostname, and the MCP server name. A service that
+  declares none answers to a hostname derived from its role or
+  roles.
 - An image deployed with **no assigned role** is entered on the
   roster as **unassigned**, and named `unassigned-<repo>` — the name
   itself is the declaration, legible at a glance. So, refining the
@@ -109,7 +115,7 @@ manifest can show in advance.
 
 | role | usual image | duty |
 |---|---|---|
-| **console** | *skewed-emacs* | the interactive control surface; receives and routes connecting agents personally; the longest-lived process in the stack |
+| **console** | *readymax* | the interactive control surface; receives and routes connecting agents personally; the longest-lived process in the stack |
 | **front-line interactive** | *gendl*, `ccl` variant | assists the console, its users, and its guests |
 | **engineering** | *gendl*, `sbcl` variant | computation and geometry, for the stack and its users |
 | **monitor** | *autoheal* | continuously polls for hung services, and restarts them |
@@ -128,7 +134,7 @@ flowchart TB
     subgraph host["the host"]
       subgraph deployment["the deployment — its generated name on the network"]
         direction TB
-        CON["console<br/><i>skewed-emacs</i>"]
+        CON["console<br/><i>readymax</i>"]
         FLI["front-line interactive<br/><i>gendl</i> · ccl variant"]
         ENG["engineering<br/><i>gendl</i> · sbcl variant"]
         MON["monitor<br/><i>autoheal</i><br/>(polls all services)"]
@@ -161,7 +167,7 @@ quietly conflated with that one:
 
 Though it happens comparatively rarely, deployments do move: a stack
 may be stopped on one host and started on another, and a host itself
-may be migrated with its deployments aboard.
+may be migrated with its deployments intact.
 
 
 ## The ingress
@@ -191,14 +197,14 @@ service's own port.
 
 ## The console toolkit
 
-The console's image name (skewed-emacs) undersells its capabilities
-considerably. The editor everyone names the image after is merely
-the best-known tool aboard:
+The console's image name (readymax) undersells its capabilities
+considerably. The editor everyone associates with the image is merely
+its best-known tool:
 
 | tool | for |
 |---|---|
 | the editor and its daemon | reading and writing — the work itself |
-| the MCP receiving layer | when agent clients connect (through the ingress or directly), this layer receives each one, identifies it, and routes it where it belongs |
+| the **lisply-mcp receiver** | when agent clients connect (through the ingress or directly), this running lisply-mcp instance receives each one, identifies it, and routes it where it belongs |
 | **webshot** | headless browser capture: renders a live page as it *actually* appears, rather than as intended. Not in every image variant — a lightly-built console lacks it, and finds out the hard way |
 | the web terminal | lets anyone the operator permits, users and agents alike, work at the console from a browser |
 
@@ -207,13 +213,15 @@ the best-known tool aboard:
 
 Deployments undergo full recreates, host rebuilds, and other
 maintenance events. A container keeps its generated instance name
-across a plain restart; a **recreate** brings up an all-new set of
-containers on the same deployment. A container's run ends one of
-four ways:
+across a plain restart; a single-service **recreate** replaces that
+container under a fresh instance name on the standing deployment; a
+**full recreate** brings up an all-new deployment — new name, new
+instance names throughout, the old name retired into the log. A
+container's run ends one of four ways:
 
 | cause | what happened |
 |---|---|
-| *recreated* | the containers were replaced; the deployment and its name persisted |
+| *recreated* | the container was replaced; a full recreate also retires the deployment name |
 | *host rebuild* | the host went down or was rebuilt; containers gone, configuration remains |
 | *died* | this container failed in service |
 | *lost* | gone without a recorded cause |

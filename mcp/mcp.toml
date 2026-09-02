@@ -8,41 +8,41 @@
 
 # DO NOT EDIT - Generated from basalt.sexp
 
-[mcp_servers.captain]
+[mcp_servers.console]
 command = "node"
-args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "captain", "--backend-host", "captain", "--http-port", "7080", "--request-timeout-ms", "30000"]
+args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "console", "--backend-host", "console", "--http-port", "7080", "--request-timeout-ms", "30000"]
 
-[mcp_servers.captain.tools.captain__ping_lisp]
+[mcp_servers.console.tools.console__ping_lisp]
 approval_mode = "approve"
 
-[mcp_servers.captain.tools.captain__http_request]
+[mcp_servers.console.tools.console__http_request]
 approval_mode = "approve"
 
-[mcp_servers.captain.tools.captain__lisp_eval]
+[mcp_servers.console.tools.console__lisp_eval]
 approval_mode = "approve"
 
-[mcp_servers.first-officer]
+[mcp_servers.front-line]
 command = "node"
-args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "first-officer", "--backend-host", "first-officer", "--http-port", "9080", "--request-timeout-ms", "30000"]
+args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "front-line", "--backend-host", "front-line", "--http-port", "9080", "--request-timeout-ms", "30000"]
 
-[mcp_servers.first-officer.tools.first-officer__ping_lisp]
+[mcp_servers.front-line.tools.front-line__ping_lisp]
 approval_mode = "approve"
 
-[mcp_servers.first-officer.tools.first-officer__http_request]
+[mcp_servers.front-line.tools.front-line__http_request]
 approval_mode = "approve"
 
-[mcp_servers.first-officer.tools.first-officer__lisp_eval]
+[mcp_servers.front-line.tools.front-line__lisp_eval]
 approval_mode = "approve"
 
-[mcp_servers.engineer]
+[mcp_servers.engineering]
 command = "node"
-args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "engineer", "--backend-host", "engineer", "--http-port", "9090", "--request-timeout-ms", "30000"]
+args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "engineering", "--backend-host", "engineering", "--http-port", "9090", "--request-timeout-ms", "30000"]
 
-[mcp_servers.engineer.tools.engineer__ping_lisp]
+[mcp_servers.engineering.tools.engineering__ping_lisp]
 approval_mode = "approve"
 
-[mcp_servers.engineer.tools.engineer__http_request]
+[mcp_servers.engineering.tools.engineering__http_request]
 approval_mode = "approve"
 
-[mcp_servers.engineer.tools.engineer__lisp_eval]
+[mcp_servers.engineering.tools.engineering__lisp_eval]
 approval_mode = "approve"

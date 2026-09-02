@@ -16,10 +16,20 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_DIR="${SCRIPT_DIR}/.."
-# The Captain's POSTING, not its species: every backend is reached by
-# exec'ing the MCP wrapper inside the Captain, whatever backend
-# --backend-host then names.  Overridable for the same reasons eskew is.
-SERVICE_NAME="${BASILISK_CAPTAIN:-captain}"
+# The Captain's ROOM, not his name: every backend is reached by
+# exec'ing the MCP wrapper inside the ready room, whatever backend
+# --backend-host then names.  Container names are minted per muster
+# now (rooms are known by their keepers), so the stable address is
+# the compose SERVICE -- the room's type slug -- and compose exec
+# resolves it to whoever keeps the room this tour.  Overridable for
+# the same reasons eskew is.  (Was `captain` before the third relief,
+# 2026-08-23 -- the stale default made every MCP server time out.)
+# The crew ledger is the source of truth for the room's slug -- a
+# fork's console service may carry its own hostname, and
+# BASILISK_POST_CAPTAIN_ROOM in generated/crew.env says which.  Env
+# override outranks the ledger; the class slug is the last fallback.
+_ledger_room="$(sed -n 's/^BASILISK_POST_CAPTAIN_ROOM=//p' "${COMPOSE_DIR}/generated/crew.env" 2>/dev/null | head -1)"
+SERVICE_NAME="${BASILISK_CAPTAIN:-${_ledger_room:-ready-room}}"
 LOG_FILE="/tmp/mcp-exec.log"
 LOCK_DIR="/tmp/mcp-exec.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
@@ -158,7 +168,12 @@ cleanup_on_exit() {
         starter_pid=$(cat "$STARTER_FILE" 2>/dev/null)
         if [ "$starter_pid" = "$$" ]; then
             log "Claude Desktop quit - we started compose, shutting it down..."
-            compose down >> "$LOG_FILE" 2>&1
+            # Through compose-dev, not bare compose: a bare `docker
+            # compose down` reads docker-compose.yml alone, so overlay
+            # rooms (transporter room, guild workshops) would be left
+            # standing; compose-dev assembles every .yml, takes the
+            # slipway lock, and sweeps orphans.
+            (cd "$COMPOSE_DIR" && ./compose-dev down) >> "$LOG_FILE" 2>&1
             rm -f "$STARTER_FILE"
             log "Compose shutdown complete"
         fi
@@ -179,8 +194,11 @@ if ! is_service_running; then
         if ! is_service_running; then
             log "Service still not running, starting the composition..."
 
-            # Clean up any stale containers first
-            compose down --remove-orphans >> "$LOG_FILE" 2>&1 || true
+            # Clean up any stale containers first -- via compose-dev so
+            # overlay rooms come down too (bare compose sees only the
+            # base file) and the slipway lock serializes against any
+            # concurrent raise.
+            (cd "$COMPOSE_DIR" && ./compose-dev down) >> "$LOG_FILE" 2>&1 || true
 
             # Start compose stack using compose-dev wrapper
             (cd "$COMPOSE_DIR" && ./compose-dev up --daemon) >> "$LOG_FILE" 2>&1

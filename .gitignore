@@ -120,3 +120,24 @@ generated/*-services-init.cl
 # nothing, so there is no "keep it THERE" to point at.  It is simply
 # gone.  See the header.)
 tmp/
+
+# ==============================================================================
+# Art-direction working papers
+# ==============================================================================
+# Conversations with the painters.  They mix raw brainstorm with
+# settled canon and are not written for the public books; what they
+# establish is distilled into the canon scrolls (and the owner's own
+# ledgers).  The images they produce graduate into artwork/ proper.
+artwork/direction/
+
+# The standing muster roll (muster_crew): the minted name of each
+# room's keeper, per instance -- uncommitted like .ship above.
+.muster
+.muster-*
+# The log of ships: every ship this galaxy raised and buried, name
+# and dates -- some names go down famous.
+.ships-log
+# The slipway lock (one raise or stand-down at a time); .conn is its
+# retired pre-2026-08-24 name, swept by the first take_the_slipway.
+.slipway
+.conn

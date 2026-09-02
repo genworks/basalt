@@ -92,7 +92,10 @@ foreign overlay fails loudly rather than quietly composing.")
   "Generate docker-compose.yml content from CONFIG."
   (let* ((defaults (skewed--get-prop config :defaults))
          (services (skewed--get-prop config :crew))
-         (network-name (or (skewed--get-prop defaults :network) "skewed-network"))
+         ;; Fallback NAME only, for a hull fitted out by hand before
+         ;; the yard has minted him one: he sails under the class name.
+         ;; (Every ./basilisk raise sets DOCKER_NETWORK_NAME from .ship.)
+         (network-name (or (skewed--get-prop defaults :network) "basilisk"))
          (lines '()))
     
     ;; Header
@@ -113,8 +116,13 @@ foreign overlay fails loudly rather than quietly composing.")
       (let ((ipv6        (skewed--get-prop defaults :network-ipv6))
             (ipv4-subnet (skewed--get-prop defaults :network-ipv4-subnet))
             (ipv6-subnet (skewed--get-prop defaults :network-ipv6-subnet)))
+        ;; The compose-file KEY is the static word `ship' -- the
+        ;; docker network IS the ship, and yaml keys cannot carry a
+        ;; minted name.  The network's actual NAME comes from .ship
+        ;; via DOCKER_NETWORK_NAME: struck and grown anew at each
+        ;; raise, same name for the life of the clone.
         (push "networks:" lines)
-        (push "  skewed-network:" lines)
+        (push "  ship:" lines)
         (push (format "    name: ${DOCKER_NETWORK_NAME:-%s}" network-name) lines)
         (push "    driver: bridge" lines)
         (when ipv6
@@ -152,19 +160,33 @@ foreign overlay fails loudly rather than quietly composing.")
         (push (format "  %s:" name) lines)
         (when image
           (push (format "    image: %s" image) lines))
-        ;; N INSTANCES ON ONE HOST.  These two look redundant and are not.
+        ;; :pull-policy "never" marks a species grown in the local vat
+        ;; only (a trial tag not yet published to any home planet), so
+        ;; a --pull raising does not go begging the registries for it.
+        (let ((pull-policy (skewed--get-prop svc :pull-policy)))
+          (when pull-policy
+            (push (format "    pull_policy: %s" pull-policy) lines)))
+        ;; ROOMS ARE KNOWN BY THEIR KEEPERS (ruling 2026-08-23).
         ;;
-        ;; container_name is GLOBAL to the docker daemon, so it is the one
-        ;; thing that genuinely collides between instances; it carries
-        ;; ${BASILISK_PREFIX}, empty by default so a lone stack is named
-        ;; exactly as before.
+        ;; container_name carries the PRIMARY RESIDENT'S MINTED NAME --
+        ;; docker's native name field is the crew name, nothing invented.
+        ;; The muster (compose-dev's muster_crew) mints it at up-time,
+        ;; persists it in .muster, and exports BASILISK_CREW_<MODULE>;
+        ;; the fallback is the module slug, so a bare compose invocation
+        ;; still raises an unmustered but working ship.  A recreate under
+        ;; a fresh name IS a relief: new face, new name, same room.
+        ;; ${BASILISK_PREFIX} still guards the one genuinely daemon-global
+        ;; collision between instances.
         ;;
-        ;; hostname is per-NETWORK, and each instance gets its own network,
-        ;; so it stays canonical -- every instance's Captain answers to
-        ;; "skewed-emacs" inside its own fleet.  That is what lets
-        ;; `run_compose exec skewed-emacs`, in-network DNS, and mcp-exec's
-        ;; --backend-host keep working unchanged in every instance.
-        (push (format "    container_name: ${BASILISK_PREFIX:-}%s" name) lines)
+        ;; hostname stays the MODULE SLUG -- the room's own address.
+        ;; Service key, hostname and in-network DNS all answer to the
+        ;; plain room type (the type-hail: ready-room, bridge,
+        ;; museum-chamber), so mcp-exec's --backend-host, probes and the
+        ;; chief's standing orders reference rooms, never residents, and
+        ;; survive every relief untouched.
+        (push (format "    container_name: ${BASILISK_PREFIX:-}${%s:-%s}"
+                      (skewed--crew-env-name name) name)
+              lines)
         (push (format "    hostname: %s" name) lines)
         ;; DECLARED TAXONOMY, as a label (Dave, 2026-08-16).  A service
         ;; must say which :post it stands.  Emitting it as a label is
@@ -198,19 +220,58 @@ foreign overlay fails loudly rather than quietly composing.")
                ;; can do (Dave, 2026-08-17).  Already unioned with the
                ;; requirements of every stood posting by
                ;; `skewed--resolve-post-requires'.
-               (requires (skewed--get-prop svc :requires)))
-          (when (or post requires)
+               (requires (skewed--get-prop svc :requires))
+               ;; The MODULE TYPE rides as a label so the muster can
+               ;; render "Thweed's ready room" from the container alone,
+               ;; and tooling can find a room by type regardless of who
+               ;; keeps it this tour (docker ps -f label=basilisk.module=...).
+               (module (skewed--get-prop svc :module))
+               ;; :unhurried? -- this hand's warm-up does not hold the
+               ;; gangway: validation starts him and moves on, leaving
+               ;; the slow boot to finish in the background under the
+               ;; Doctor's watch (the museum chamber's antique).
+               (unhurried (skewed--get-prop svc :unhurried?)))
+          (when (or post requires module unhurried)
             (push "    labels:" lines)
             (when post
               (push (format "      basilisk.post: \"%s\"" post) lines))
+            (when module
+              (push (format "      basilisk.module: \"%s\"" module) lines))
             (when requires
               (push (format "      basilisk.requires: \"%s\""
                             (mapconcat #'identity requires ","))
-                    lines))))
+                    lines))
+            (when unhurried
+              (push "      basilisk.unhurried: \"true\"" lines))))
         (when user (push (format "    user: %s" user) lines))
         (push (format "    restart: %s" restart) lines)
+        ;; :init? t berths docker's own tiny init as PID 1.  For a
+        ;; species whose entrypoint is a bare interpreter process (a
+        ;; python or node serving as PID 1 gets no default signal
+        ;; dispositions from the kernel, so SIGTERM is silently
+        ;; ignored), this is what lets the hand answer a stop order
+        ;; instead of eating the whole stop_grace_period and taking
+        ;; the SIGKILL -- whose late endpoint cleanup then races
+        ;; compose's network rm at down (see release_ship in
+        ;; compose-dev).
+        (when (skewed--get-prop svc :init?)
+          (push "    init: true" lines))
         (push "    stdin_open: true" lines)
         (push "    tty: true" lines)
+        ;; A filtered hull takes no writes; whatever must stay
+        ;; breathable rides tmpfs and is gone at power-down.  (The
+        ;; museum chamber's atmospheric filtering -- filtered, not
+        ;; sealed: its declared lines still ride the ship's network.)
+        ;; :sealed-hull? is the retired name for the same key,
+        ;; honored so older articles keep generating.
+        (when (or (skewed--get-prop svc :filtered-hull?)
+                  (skewed--get-prop svc :sealed-hull?))
+          (push "    read_only: true" lines))
+        (let ((breathable (skewed--get-prop svc :breathable-volumes)))
+          (when breathable
+            (push "    tmpfs:" lines)
+            (dolist (vol breathable)
+              (push (format "      - %s" vol) lines))))
         (when network-mode
           (push (format "    network_mode: %s" network-mode) lines))
         
@@ -265,10 +326,14 @@ foreign overlay fails loudly rather than quietly composing.")
               (push (format "      - path: %s" path) lines)
               (push (format "        required: %s" (if required "true" "false")) lines))))
         
-        ;; Volumes
-        (let ((default-vols (skewed--get-prop defaults :cargo-bays))
+        ;; Volumes.  A crew entry with :no-default-cargo? takes nothing
+        ;; from dockside: the default cargo bays stay ashore (the sealed
+        ;; museum chamber -- an airgap alone does not refuse a mount).
+        (let ((default-vols (unless (skewed--get-prop svc :no-default-cargo?)
+                              (skewed--get-prop defaults :cargo-bays)))
               (svc-vols vols))
-          (push "    volumes:" lines)
+          (when (or default-vols svc-vols)
+            (push "    volumes:" lines))
           (dolist (vol default-vols)
             (let ((src (skewed--get-prop vol :dockside))
                   (tgt (skewed--get-prop vol :stowed-at)))
@@ -321,10 +386,10 @@ foreign overlay fails loudly rather than quietly composing.")
                 ;; (cyclops backends, MCP configs, SLIME) reaches the
                 ;; same container.
                 (progn
-                  (push "      skewed-network:" lines)
+                  (push "      ship:" lines)
                   (push "        aliases:" lines)
                   (push (format "          - %s" alias) lines))
-              (push "      - skewed-network" lines))))
+              (push "      - ship" lines))))
         
         ;; Healthcheck
         (when healthcheck
@@ -573,7 +638,7 @@ hosts stay offsettable."
               (push (format "%s=%s" var val) pins))))))
     (nreverse pins)))
 
-(defun skewed--generate-install-script (prefix &optional has-mcp variant port-pins template-files)
+(defun skewed--generate-install-script (prefix &optional has-mcp variant port-pins template-files no-pull)
   "Generate install script for overlay or base repository with PREFIX.
 When PREFIX is empty, generates a base install (copies docker-compose.yml).
 When HAS-MCP is non-nil, include MCP config copy commands.
@@ -582,6 +647,11 @@ written into host.env alongside the image variant.
 TEMPLATE-FILES is a list of (SRC-BASENAME . DEST-BASENAME) copied into
 the basilisk clone's templates/ directory, for compose-dev to rewrite
 from the crew ledger on the way up.
+When NO-PULL is non-nil (the articles' :meta :no-pull?), NO_PULL=1 rides
+host.env: a provisioned ship puts to sea on what is already aboard --
+boot never contacts a registry, even for a missing image, and it also
+outranks a stray PULL_ALWAYS.  Deploys take on stores explicitly with
+`basilisk pull' / `up --pull'.
 Returns the install script content as a string."
   (let ((lines '())
         (is-base (string-empty-p prefix))
@@ -706,12 +776,13 @@ Returns the install script content as a string."
     ;; hand it the dev port (see `skewed--ingress-port-pins').
     (unless is-base
       (progn
-        (when (or variant port-pins)
+        (when (or variant port-pins no-pull)
           (push "# --- systemd host injection ------------------------------------" lines)
           (push (format "echo \"Injecting systemd host.env (%s)...\""
                         (string-join
                          (append (when variant (list (format "image variant: %s" variant)))
-                                 (mapcar (lambda (pin) (format "pin %s" pin)) port-pins))
+                                 (mapcar (lambda (pin) (format "pin %s" pin)) port-pins)
+                                 (when no-pull (list "no boot-time pulls")))
                          ", "))
                 lines)
           (push "mkdir -p \"$TARGET_DIR/systemd\"" lines)
@@ -722,6 +793,9 @@ Returns the install script content as a string."
             (push (format "  echo \"EMACS_IMAGE_VARIANT=%s\"" variant) lines))
           (dolist (pin port-pins)
             (push (format "  echo \"%s\"" pin) lines))
+          (when no-pull
+            (push "  echo \"# Provisioned ship: boot never contacts a registry.\"" lines)
+            (push "  echo \"NO_PULL=1\"" lines))
           (push "} > \"$TARGET_DIR/systemd/host.env\"" lines)
           (push "echo \"  wrote $TARGET_DIR/systemd/host.env\"" lines)
           (push "echo \"  install/refresh the units with: (cd $TARGET_DIR && sh systemd/install)\"" lines)
@@ -822,38 +896,55 @@ rode along in the string is dropped."
   "Fill in each crew entry's :name where the articles left it out.
 Only :species is required of a service.  An explicit :name wins -- it
 is the author's slug, and the license to abbreviate lives there.
-Absent one: a posted crew member takes the slug of every post it
-stands (full post names, hyphen-joined; no post is primary); a
-species aboard with NO assigned posting takes a designator prefix on
-the repo half of its species, so one is obvious from its slug alone.
-The designator is \"stowaway\" -- the yard's native word -- unless a
-fork's glossary :vocabulary overrides it (:stowaway-designator), which
-changes it without touching shipped code.  Collisions get -2, -3 ...
-suffixes, which the role machinery already tolerates (jr-eng-cyborg-2
-is still an engineer)."
+Absent one, ROOMS TAKE TYPE SLUGS (ruling 2026-08-23): an entry
+declaring its :module takes the slug of its module type -- the
+service key, hostname and in-network hail are all the room's plain
+type (ready-room, bridge, guild-workshop), while the CONTAINER name
+carries the resident's minted personal name via the muster (see the
+container_name emission).  An entry with no :module falls back to the
+slug of every post it stands (full post names, hyphen-joined; no post
+is primary); a species aboard with NO assigned posting takes a
+designator prefix on the repo half of its species, so one is obvious
+from its slug alone.  The designator is \"stowaway\" -- the yard's
+native word -- unless a fork's glossary :vocabulary overrides it
+(:stowaway-designator), which changes it without touching shipped
+code.  Collisions get -2, -3 ... suffixes: a hull with two guild
+workshops carries guild-workshop and guild-workshop-2, in declaration
+order."
   (let ((taken (delq nil (mapcar (lambda (s) (plist-get s :name))
                                  (skewed--get-prop config :crew))))
         (designator (or (skewed--glossary-vocab glossary :stowaway-designator)
                         "stowaway")))
     (dolist (svc (skewed--get-prop config :crew))
       (unless (plist-get svc :name)
-        (let* ((posts (skewed--ensure-list (plist-get svc :post)))
-               (stem (if posts
-                         (mapconcat (lambda (p) (substring (symbol-name p) 1))
-                                    posts "-")
-                       (let ((repo (skewed--species-repo
-                                    (plist-get svc :species))))
-                         (if (string-empty-p repo) ""
-                           (concat designator "-" repo)))))
+        (let* ((module (plist-get svc :module))
+               (posts (skewed--ensure-list (plist-get svc :post)))
+               (stem (cond (module module)
+                           (posts
+                            (mapconcat (lambda (p) (substring (symbol-name p) 1))
+                                       posts "-"))
+                           (t
+                            (let ((repo (skewed--species-repo
+                                         (plist-get svc :species))))
+                              (if (string-empty-p repo) ""
+                                (concat designator "-" repo))))))
                (name stem)
                (n 1))
           (when (string-empty-p stem)
-            (error "Crew entry with no :name, no :post and no :species -- nothing to derive a name from"))
+            (error "Crew entry with no :name, no :module, no :post and no :species -- nothing to derive a name from"))
           (while (member name taken)
             (setq n (1+ n) name (format "%s-%d" stem n)))
           (push name taken)
           (plist-put svc :name name)))))
   config)
+
+(defun skewed--crew-env-name (name)
+  "The muster variable for service NAME: BASILISK_CREW_<NAME sanitized>.
+Its value is the resident's minted personal name; compose interpolates
+it into container_name.  Minting and persistence live in compose-dev's
+muster_crew, keyed by these same names."
+  (concat "BASILISK_CREW_"
+          (upcase (replace-regexp-in-string "[^A-Za-z0-9]" "_" name))))
 
 (defun skewed--read-articles (services-file)
   "Read SERVICES-FILE translated through its own glossary, species
@@ -866,18 +957,25 @@ joined, missing names derived.  Every consumer sees the same names."
         (skewed--translate-register config glossary))
        glossary))))
 
-;;; THE CREW LEDGER (crew.env): posting -> the hand standing it.
+;;; THE CREW LEDGER (crew.env): posting -> his room, and his ports.
 ;;;
-;;; A rule in a templated fitting (templates/, substituted by
-;;; compose-dev on the way up) names a POSTING, never a crew member:
-;;; ${BASILISK_POST_1ST_OFFICER} resolves to whatever name the hand
-;;; standing :1st-officer answers to, and
-;;; ${BASILISK_POST_1ST_OFFICER_HTTP_PORT} to the aboard port of his
-;;; http frequency.  So the chief's standing orders survive renames
-;;; and reliefs untouched.  ONE hand per posting for now: the first
-;;; declared wins (base order, then overlay additions); ships with
-;;; several of a posting are a known limitation, deliberately
-;;; unhandled until the simple case has sailed.
+;;; ROUTINGS NAME A ROOM AND A CREW MEMBER (ruling 2026-08-24):
+;;; containers are ROOMS, and the services answering on ports inside
+;;; are the CREW.  A rule in a templated fitting (templates/,
+;;; substituted by compose-dev on the way up) therefore states both
+;;; halves by lookup: ${BASILISK_POST_FIRST_OFFICER_ROOM} resolves to
+;;; the room where :first-officer stands (the container hostname),
+;;; and ${BASILISK_POST_FIRST_OFFICER_HTTP_PORT} to the aboard port
+;;; his http frequency answers on -- "the captain in the ready room"
+;;; is port 7080 in the skewed-emacs room.  The articles'
+;;; hailing-frequencies are the single source of truth for every
+;;; port: fittings look ports up, never restate them.  So the chief's
+;;; standing orders survive renames and reliefs untouched.  ONE hand
+;;; per posting for now: the first declared wins (base order, then
+;;; overlay additions); ships with several of a posting are a known
+;;; limitation, deliberately unhandled until the simple case has
+;;; sailed.  (The bare ${BASILISK_POST_<P>} key, which yielded the
+;;; room under a crew-sounding name, retired with this ruling.)
 
 (defun skewed--posting-env-name (post)
   "BASILISK_POST_<POSTING> environment name for POST keyword."
@@ -887,14 +985,21 @@ joined, missing names derived.  Every consumer sees the same names."
 
 (defun skewed--generate-crew-env (crew)
   "KEY=VALUE lines resolving each posting to its first-declared hand.
-CREW is the ship's full merged complement."
+CREW is the ship's full merged complement.
+
+Besides the posting rows, the ledger carries a MODULE stanza: one
+_NAME/_SPECIES pair per room aboard, which is what compose-dev's
+muster_crew iterates to mint each room's resident a personal name
+(species-flavored pools) before the vat runs.  The species is emitted
+with compose defaults resolved -- close enough for name flavor, which
+keys on the repo half and broad tag features."
   (let ((seen '()) (lines '()))
     (dolist (svc crew)
       (dolist (p (skewed--ensure-list (plist-get svc :post)))
         (unless (memq p seen)
           (push p seen)
           (let ((base (skewed--posting-env-name p)))
-            (push (format "%s=%s" base (plist-get svc :name)) lines)
+            (push (format "%s_ROOM=%s" base (plist-get svc :name)) lines)
             (dolist (f (plist-get svc :hailing-frequencies))
               (let ((fname (plist-get f :name))
                     (port (plist-get f :aboard)))
@@ -904,6 +1009,15 @@ CREW is the ship's full merged complement."
                                          "-" "_" fname))
                                 port)
                         lines))))))))
+    ;; The module stanza: every room aboard, for the muster's minting.
+    (dolist (svc crew)
+      (let* ((name (plist-get svc :name))
+             (san (upcase (replace-regexp-in-string "[^A-Za-z0-9]" "_" name)))
+             (image (skewed--resolve-compose-defaults
+                     (or (plist-get svc :image) ""))))
+        (when name
+          (push (format "BASILISK_MOD_%s_NAME=%s" san name) lines)
+          (push (format "BASILISK_MOD_%s_SPECIES=%s" san image) lines))))
     (mapconcat #'identity (nreverse lines) "\n")))
 
 (defun skewed--generate-vocabulary-env (glossary)
@@ -925,11 +1039,20 @@ glossary alone, never shipped basilisk code."
       (emit "BASILISK_VOCAB_STOWAWAY_DESIGNATOR"
             (plist-get vocab :stowaway-designator))
       (cl-loop for (role title) on (plist-get vocab :muster-titles) by #'cddr
+               ;; Hyphens become underscores: :first-officer must emit
+               ;; a legal POSIX name (BASILISK_VOCAB_TITLE_FIRST_OFFICER),
+               ;; or sourcing vocabulary.env fails at up-time.
                do (emit (format "BASILISK_VOCAB_TITLE_%s"
-                                (upcase (substring (symbol-name role) 1)))
+                                (upcase (replace-regexp-in-string
+                                         "-" "_" (substring (symbol-name role) 1))))
                         title))
       (emit "BASILISK_VOCAB_NO_INGRESS_WARNING"
-            (plist-get vocab :no-ingress-warning)))
+            (plist-get vocab :no-ingress-warning))
+      ;; The hailing calls: a fork may rename rmax/grmax; the yard's
+      ;; own words stand as the defaults everywhere the shell reads
+      ;; these (install_shell_functions and the welcome).
+      (emit "BASILISK_VOCAB_HAIL_TERM" (plist-get vocab :hail-term))
+      (emit "BASILISK_VOCAB_HAIL_GUI" (plist-get vocab :hail-gui)))
     (concat (string-join (nreverse lines) "\n") "\n")))
 
 (defun skewed--filter-berthed (config &optional base-names)
@@ -971,7 +1094,7 @@ no rosters)."
 (defun skewed--resolve-post-requires (config base-config)
   "Union each crew entry's :requires with those of every post it stands.
 :post may be a single keyword or a LIST -- one crew member can stand
-several posts (narad's human junior engineer also stands
+several posts (narad's First Officer also stands
 :communications-officer, the ability arriving with his services-init
 hook at boot or later, not with his species).  Per-post requirements
 come from the :postings qualification tables -- this file's own, then
@@ -1072,10 +1195,11 @@ history); setq it after loading to point elsewhere.")
     (cl-loop for (k v) on over by #'cddr do (setq out (plist-put out k v)))
     out))
 
-;;; EYES ONLY HEAP PROBES FROM THE ARTICLES (2026-08-15, reworked 2026-08-17)
+;;; EYES ONLY QUARTERS PROBES FROM THE ARTICLES (2026-08-15, reworked
+;;; 2026-08-17; register overhaul 2026-09-01)
 ;;;
 ;;; The articles are the SSoT for who is aboard, so they are also the
-;;; authority on what can be PROBED.  eyes-only's *heap-probes* was
+;;; authority on what can be PROBED.  eyes-only's probe list was
 ;;; hand-maintained per board, which meant a probe could name a crew
 ;;; member who was never aboard the ship it points at -- and an absent
 ;;; optional post then presents as a permanently red tile rather than as
@@ -1088,6 +1212,17 @@ history); setq it after loading to point elsewhere.")
 ;;; watched ship's crew is its base articles merged with its own overlay
 ;;; articles, overlay keys winning -- the same key-wise discipline
 ;;; compose applies to the generated yml.
+;;;
+;;; Tile grammar (2026-09-01): tiles name QUARTERS -- the room-type
+;;; slug plus the galaxy the ship floats in, "<module> <stack>"
+;;; ("bridge balaram"), emitted into eyes-only::*quarters-probes*.
+;;; The room slug comes straight from the crew entry's :module, so
+;;; the old hand-maintained :probe :tile field is retired; the
+;;; resident's minted name, sku, and postings are HARVESTED live by
+;;; the board (metrics self-reports + the muster roll), never baked
+;;; into config.  Tile keys stay stable across raisings by design --
+;;; every raising is a new ship, and the board's telemetry history
+;;; must survive a relief.
 
 (defun skewed--stack-crew (stack-dir)
   "The full crew of the ship at STACK-DIR: base articles + its overlay.
@@ -1116,8 +1251,10 @@ when no articles are found at STACK-DIR."
       out)))
 
 (defun skewed--heap-probe-entries (config dir)
-  "Build the eyes-only *heap-probes* list for the board declared in CONFIG.
-Returns nil unless CONFIG's :meta carries an :eyes-only-board.
+  "Build the eyes-only *quarters-probes* list for the board declared
+in CONFIG.  Tiles are \"<module> <stack>\" -- the quarters' room slug
+plus the galaxy.  Returns nil unless CONFIG's :meta carries an
+:eyes-only-board.
 
 Each watch entry names a :stack and either :in-stack t (this board's own
 ship, sampled over the docker bridge) or an :edge URL prefix reaching that
@@ -1144,7 +1281,8 @@ actually carries, which is the guarantee that kills phantom tiles."
                      (probe (plist-get svc :probe))
                      ;; A probe with no :in-stack form contributes nothing
                      ;; to its own board -- the board self-samples its own
-                     ;; image for the heap gendl-ccl tile.
+                     ;; image (it rides its ship's bridge, the pocket
+                     ;; viewscreen).
                      (spec (and probe (if in-stack
                                           (plist-get probe :in-stack)
                                         (plist-get probe :remote)))))
@@ -1154,7 +1292,16 @@ actually carries, which is the guarantee that kills phantom tiles."
                   (unless (or in-stack edge)
                     (error "Board watch for %s is off-ship but declares no :edge"
                            stack))
-                  (push (list (format "%s %s" (plist-get probe :tile) stack)
+                  ;; The tile's room slug is the entry's RESOLVED
+                  ;; :name (skewed--derive-names): the room-type slug
+                  ;; with collision suffixes, the same key the muster
+                  ;; uses -- so \"guild-workshop-2 balaram\" and
+                  ;; BASILISK_CREW_GUILD_WORKSHOP_2 agree, and the
+                  ;; board's muster harvest lands on the same tile.
+                  (unless (plist-get svc :name)
+                    (error "Crew entry %s carries a :probe but no resolvable name"
+                           (plist-get svc :post)))
+                  (push (list (format "%s %s" (plist-get svc :name) stack)
                               (plist-get spec :kind)
                               (or (plist-get spec :url)
                                   (concat edge (plist-get spec :path)))
@@ -1169,7 +1316,7 @@ actually carries, which is the guarantee that kills phantom tiles."
                          stack post)))))
         (nreverse out)))))
 
-(defun skewed--generate-heap-probes-file (config dir)
+(defun skewed--generate-quarters-probes-file (config dir)
   "Write eyes-only-probes-generated.lisp for a board stack, if it is one."
   (let ((probes (skewed--heap-probe-entries config dir)))
     (when probes
@@ -1182,11 +1329,14 @@ actually carries, which is the guarantee that kills phantom tiles."
           (insert ";;;\n")
           (insert ";;; Every entry here corresponds to a post actually aboard the target\n")
           (insert ";;; ship, so a crew member who is not aboard cannot show up\n")
-          (insert ";;; as a permanently red tile.  Change the fleet by editing the\n")
+          (insert ";;; as a permanently red tile.  Tiles name QUARTERS -- the room\n")
+          (insert ";;; slug plus the galaxy (\"bridge balaram\"); the resident's minted\n")
+          (insert ";;; name, sku, and postings are harvested live by the board, never\n")
+          (insert ";;; baked in here.  Change the fleet by editing the\n")
           (insert (format ";;; ships' articles, or this board's :eyes-only-board, in %s.\n\n"
                           skewed-gen-articles-filename))
           (insert "(in-package :gdl-user)\n\n")
-          (insert "(setq eyes-only::*heap-probes*\n      '(")
+          (insert "(setq eyes-only::*quarters-probes*\n      '(")
           (let ((first t))
             (dolist (p probes)
               (if first (setq first nil) (insert "\n        "))
@@ -1322,7 +1472,9 @@ Examples:
           (make-directory (file-name-directory crew-env) t)
           (with-temp-file crew-env
             (insert (format "# DO NOT EDIT - Generated from %s\n" skewed-gen-articles-filename)
-                    "# The crew ledger: posting -> first hand standing it, aboard ports per frequency.\n"
+                    "# The crew ledger: posting -> his room (_ROOM) and his aboard ports (_<FREQ>_PORT).\n"
+                    "# Routings name a room and a crew member; the articles' hailing-frequencies\n"
+                    "# are the single source of truth for ports.\n"
                     "# Consumed by compose-dev's substitute_templates on the way up.\n"
                     (skewed--generate-crew-env ledger-crew)
                     "\n"))
@@ -1411,13 +1563,14 @@ Examples:
                    (skewed--has-mcp-services-p config)
                    (plist-get (skewed--get-prop config :meta) :strain)
                    (skewed--ingress-port-pins config)
-                   template-files)))
+                   template-files
+                   (plist-get (skewed--get-prop config :meta) :no-pull?))))
         (set-file-modes install-file #o755)
         (message "Generated: %s" install-file)))
 
     ;; Eyes Only heap probes, for a stack that declares itself a board.
     ;; Reads the OTHER ships' rosters, so it runs last.
-    (skewed--generate-heap-probes-file config skewed-gen-output-dir)
+    (skewed--generate-quarters-probes-file config skewed-gen-output-dir)
 
     (message "=== Generation complete ===")))
 

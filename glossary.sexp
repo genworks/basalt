@@ -14,47 +14,56 @@
 ;;; natively.  :terms maps this register's keys onto the ones the
 ;;; generator reads -- substituted immediately after reading, so no
 ;;; shipped code changes.  Terms may be used only as KEYS in
-;;; basalt.sexp, never as values.
+;;; basalt.sexp, never as values.  (String values -- hostnames, image
+;;; references, :requires tokens -- pass through untranslated.)
 ;;;
 ;;; :vocabulary is the dictionary's other half: the strings the
 ;;; generator and startup COIN (roster prefixes, startup titles,
-;;; absence warnings).  Entries here override the upstream defaults
-;;; via generated/vocabulary.env; anything omitted falls back.
+;;; absence warnings, the shell hailing-call names).  Entries here
+;;; override the upstream defaults via generated/vocabulary.env;
+;;; anything omitted falls back.
 
 (
  :terms
- (:services      :crew
-  :mcp           :cyborg-passengers-allowed?
-  :mcp-wrapper   :mcp
-  :environment   :space-suit
-  :volumes       :cargo-bays
-  :source        :dockside
-  :target        :stowed-at
-  :ports         :hailing-frequencies
-  :container     :aboard
-  :host          :galaxy
-  :image-variant :strain
-  :image         :species
+ (:services           :crew
+  :mcp                :cyborg-passengers-allowed?
+  :mcp-wrapper        :mcp
+  :environment        :space-suit
+  :volumes            :cargo-bays
+  :source             :dockside
+  :target             :stowed-at
+  :ports              :hailing-frequencies
+  :container          :aboard
+  :host               :galaxy
+  :hostname           :module
+  :registry-namespace :provenance
+  :image-variant      :strain
+  :image              :species
   ;; The role system.  Substitution is position-blind, so these carry
   ;; role NAMES (value position) as well as the table keys.  A term
   ;; must therefore never be reused elsewhere in basalt.sexp with a
   ;; different meaning.
-  :roles         :postings
-  :role          :post
-  :console       :captain
-  :front-line    :first-officer
-  :engineering   :engineer
-  :ingress       :transporter-chief
-  :dashboard     :communications-officer
-  :monitor       :doctor)
+  :roles              :postings
+  :role               :post
+  :console            :captain
+  :front-line         :first-officer
+  :engineering        :ships-engineer
+  :ingress            :transporter-chief
+  :dashboard          :communications-officer
+  :monitor            :doctor)
 
  :vocabulary
  (:stowaway-designator "unassigned"
-  :muster-titles (:captain  "Console"
-                  :pilot    "Ingress"
-                  :engineer "Engine"
-                  :comm     "Dashboard"
-                  :doctor   "Monitor"
-                  :stowaway "Unassigned"
-                  :crew     "Service")
-  :no-ingress-warning "no ingress service configured: nothing fronts HTTP; ports publish directly"))
+  :muster-titles (:captain       "Console"
+                  :first-officer "Front Line"
+                  :engineer      "Engineering"
+                  :pilot         "Ingress"
+                  :comm          "Dashboard"
+                  :doctor        "Monitor"
+                  :stowaway      "Unassigned"
+                  :crew          "Service")
+  :no-ingress-warning "no ingress service configured: nothing fronts HTTP; ports publish directly"
+  ;; The shell convenience commands for reaching the containerized
+  ;; Emacs (the upstream words are rmax/grmax).
+  :hail-term "rmacs"
+  :hail-gui  "grmacs"))

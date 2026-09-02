@@ -10,8 +10,8 @@
 # Regenerate with: (skewed-generate-all-configs)
 
 networks:
-  skewed-network:
-    name: ${DOCKER_NETWORK_NAME:-skewed-network}
+  ship:
+    name: ${DOCKER_NETWORK_NAME:-basilisk}
     driver: bridge
     enable_ipv6: true
     ipam:
@@ -21,13 +21,14 @@ networks:
 
 services:
 
-  captain:
-    image: gornskew/${EMACS_IMAGE_BASE:-skewed-emacs}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}
-    container_name: ${BASILISK_PREFIX:-}captain
-    hostname: captain
+  console:
+    image: gornskew/${EMACS_IMAGE_BASE:-readymax}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}
+    container_name: ${BASILISK_PREFIX:-}${BASILISK_CREW_CONSOLE:-console}
+    hostname: console
     labels:
       basilisk.post: "captain"
-      basilisk.requires: "skewed-emacs"
+      basilisk.module: "console"
+      basilisk.requires: "readymax"
     restart: unless-stopped
     stdin_open: true
     tty: true
@@ -56,7 +57,7 @@ services:
       - ${EMACS_LOCAL_SRC:-/nonexistent}/.emacs-local:/home/emacs-user/.emacs-local:ro
       - ${EMACS_LOCAL_SRC:-/nonexistent}/.emacs-local-early:/home/emacs-user/.emacs-local-early:ro
     networks:
-      - skewed-network
+      - ship
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7080/lisply/ping-lisp"]
       interval: 30s
@@ -64,12 +65,13 @@ services:
       retries: 3
       start_period: 15s
 
-  first-officer:
+  front-line:
     image: gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-ccl
-    container_name: ${BASILISK_PREFIX:-}first-officer
-    hostname: first-officer
+    container_name: ${BASILISK_PREFIX:-}${BASILISK_CREW_FRONT_LINE:-front-line}
+    hostname: front-line
     labels:
       basilisk.post: "first-officer"
+      basilisk.module: "front-line"
       basilisk.requires: "gendl"
     restart: unless-stopped
     stdin_open: true
@@ -90,7 +92,7 @@ services:
         bind:
           create_host_path: true
     networks:
-      - skewed-network
+      - ship
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9080/lisply/ping-lisp"]
       interval: 72s
@@ -98,12 +100,13 @@ services:
       retries: 3
       start_period: 15s
 
-  engineer:
+  engineering:
     image: gornskew/${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-sbcl
-    container_name: ${BASILISK_PREFIX:-}engineer
-    hostname: engineer
+    container_name: ${BASILISK_PREFIX:-}${BASILISK_CREW_ENGINEERING:-engineering}
+    hostname: engineering
     labels:
-      basilisk.post: "engineer"
+      basilisk.post: "ships-engineer"
+      basilisk.module: "engineering"
       basilisk.requires: "gendl"
     restart: unless-stopped
     stdin_open: true
@@ -124,7 +127,7 @@ services:
         bind:
           create_host_path: true
     networks:
-      - skewed-network
+      - ship
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9090/lisply/ping-lisp"]
       interval: 90s
@@ -132,12 +135,13 @@ services:
       retries: 3
       start_period: 15s
 
-  doctor:
+  monitor:
     image: willfarrell/autoheal:latest
-    container_name: ${BASILISK_PREFIX:-}doctor
-    hostname: doctor
+    container_name: ${BASILISK_PREFIX:-}${BASILISK_CREW_MONITOR:-monitor}
+    hostname: monitor
     labels:
       basilisk.post: "doctor"
+      basilisk.module: "monitor"
     restart: unless-stopped
     stdin_open: true
     tty: true
@@ -154,4 +158,4 @@ services:
           create_host_path: true
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - skewed-network
+      - ship

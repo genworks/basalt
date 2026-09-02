@@ -1,19 +1,20 @@
 # Claude Desktop Integration (Linux, macOS, Windows)
 
-How to point Claude Desktop at a running Basilisk, so it can drive the
-Emacs and Common Lisp images aboard as MCP tools.
+How to point Claude Desktop at a running Basalt deployment, so it can
+drive the Emacs and Common Lisp images as MCP tools.
 
-This lives in the Basilisk repo rather than in `skewed-emacs` because the
-config being generated registers **every** server on the roster —
-`skewed-emacs`, `gendl-ccl`, `gendl-sbcl`, and whatever the overlays add.
-No single crew member's repo can write that file, because none of them
-knows what else is aboard.
+This lives in the Basalt repo rather than in `readymacs` because the
+config being generated registers **every** server on the roster — the
+deployment's services: `console`, `front-line`, `engineering`, and
+whatever services the stack repositories add (an ingress, licensed
+engine variants, ...). No single service's repo can write that file,
+because none of them knows what else is deployed.
 
 ## Prerequisites
 
 - Docker running (Docker Desktop on macOS/Windows, Docker Engine on Linux)
 - [Claude Desktop](https://claude.ai/download) installed
-- Basilisk cloned and a stack started at least once (see the main README)
+- Basalt cloned and a deployment started at least once (see the main README)
 - Windows only: [WSL2](https://docs.microsoft.com/en-us/windows/wsl/install)
   with Docker Desktop using the WSL2 backend
 
@@ -22,12 +23,12 @@ knows what else is aboard.
 1. **Start the stack** (if not already running):
 
    ```bash
-   cd ~/projects/basilisk
-   ./basilisk up
+   cd ~/projects/basalt
+   ./basalt up
    ```
 
    Wait for the `[SUCCESS] Claude Desktop config ready` message.
-   `basilisk` detects your platform and writes the appropriate config to
+   `basalt` detects your platform and writes the appropriate config to
    `mcp/claude_desktop_config.json` — on Linux and macOS it invokes
    `mcp/mcp-exec` directly; on Windows it goes through `wsl`.
 
@@ -50,16 +51,17 @@ knows what else is aboard.
 
    Replace `YOUR_USERNAME` with your Windows username. Alternatively,
    from Windows Explorer:
-   - Source: `\\wsl$\Ubuntu\home\YOUR_WSL_USER\projects\basilisk\mcp\claude_desktop_config.json`
+   - Source: `\\wsl$\Ubuntu\home\YOUR_WSL_USER\projects\basalt\mcp\claude_desktop_config.json`
    - Destination: `%APPDATA%\Claude\claude_desktop_config.json`
 
 3. **Restart Claude Desktop** — you should see the roster's MCP servers
-   connect:
-   - `skewed-emacs` — Emacs Lisp evaluation
-   - `gendl-sbcl` — Common Lisp (SBCL) with Gendl
-   - `gendl-ccl` — Common Lisp (CCL) with Gendl
+   connect, named for the deployment's services:
+   - `console` — Emacs Lisp evaluation (the interactive control surface)
+   - `front-line` — Common Lisp (CCL) with Gendl
+   - `engineering` — Common Lisp (SBCL) with Gendl
 
-   (Plus any additional backends from overlay repos you have installed.)
+   (Plus any additional services from stack repositories you have
+   installed.)
 
 4. **Optional — prime your first session**: paste the contents of
    [`mcp/opening-prompt.md`](../mcp/opening-prompt.md) as your first
@@ -70,15 +72,15 @@ knows what else is aboard.
 The stack must be running for Claude Desktop to use the MCP servers:
 
 ```bash
-cd ~/projects/basilisk
-./basilisk up -d   # -d for daemon mode (no interactive shell)
+cd ~/projects/basalt
+./basalt up -d   # -d for daemon mode (no interactive shell)
 ```
 
 To stop it:
 
 ```bash
-cd ~/projects/basilisk
-./basilisk down
+cd ~/projects/basalt
+./basalt down
 ```
 
 ## What You Can Do
@@ -93,7 +95,7 @@ With these MCP servers, Claude Desktop can:
 ## Bootstrapping a Session
 
 Optional but recommended: create a Claude Desktop Project and paste
-[`PROJECT_INSTRUCTIONS.md`](https://github.com/gornskew/skewed-emacs/blob/master/docs/PROJECT_INSTRUCTIONS.md)
+[`PROJECT_INSTRUCTIONS.md`](https://gitlab.genworks.com/genworks/readymacs/-/blob/devo/docs/PROJECT_INSTRUCTIONS.md)
 into its custom instructions, so every session starts with the
 dashboard/daily-focus routine and safe editing conventions. The same text
 works in a Claude Code `CLAUDE.md` or Codex `AGENTS.md`. For a one-shot
@@ -104,10 +106,10 @@ as your first message.
 
 Claude Desktop is just one consumer. The same generated configs work for:
 
-- **Claude Code**: from the Basilisk clone, `claude mcp add` each server
+- **Claude Code**: from the Basalt clone, `claude mcp add` each server
   from `mcp/claude_desktop_config.json`, or copy its `mcpServers` block
   into a `.mcp.json` in your project
-- **Codex CLI**: `./basilisk up` maintains `~/.codex/config.toml` inside
+- **Codex CLI**: `./basalt up` maintains `~/.codex/config.toml` inside
   the container automatically; for a host-side Codex, adapt `mcp/mcp.toml`
 - **Grok Build CLI**: the same merged TOML is written into
   `~/.grok/config.toml` (`[mcp_servers.*]`); launch with `grokly` from a
@@ -124,7 +126,7 @@ into your existing configuration file by hand.
 ## Cloning to a Different Location
 
 The generated `claude_desktop_config.json` contains the absolute path to
-your **Basilisk** clone, determined at `./basilisk up` time from where you
+your **Basalt** clone, determined at `./basalt up` time from where you
 run the command, so a non-default clone location works automatically. If
 you move the clone, regenerate and re-copy: a config pointing at a
 `mcp-exec` that is no longer there fails quietly, with nothing obviously
@@ -134,16 +136,16 @@ wrong in Claude Desktop's UI.
 
 **MCP servers not connecting:**
 - Ensure the stack is running (`docker ps` should show the containers)
-- Check that the paths in `claude_desktop_config.json` match your Basilisk
+- Check that the paths in `claude_desktop_config.json` match your Basalt
   clone location
 - Restart Claude Desktop after copying the config
 
 **`mcp/claude_desktop_config.json` missing or stale:**
-- It is generated; run `./basilisk up` and wait for the
+- It is generated; run `./basalt up` and wait for the
   `[SUCCESS] Claude Desktop config ready` message
 - If the message doesn't appear, the Emacs daemon may still be starting —
-  run `./basilisk up` again
+  run `./basalt up` again
 
 **"emacsclient not ready" warning on first start:**
 - This is normal — the Emacs daemon takes a few seconds to initialize
-- Run `./basilisk up` again and the MCP config will generate successfully
+- Run `./basalt up` again and the MCP config will generate successfully
