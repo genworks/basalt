@@ -2143,14 +2143,27 @@ SNIPPET
     _isf_wrote=false
     _isf_wrote_files=""
     _isf_seen=""
-    # Write to primary, .bashrc, and .profile always; .bash_profile / .zprofile if they exist.
-    # The primary is usually one of the fixed entries, so dedupe -- it
-    # used to earn .bashrc two identical "already in" lines per raise.
-    for _isf_rc in "$_isf_primary" "${HOME}/.bashrc" "${HOME}/.profile" \
-                   "${HOME}/.bash_profile" "${HOME}/.zprofile"; do
+    # Write to primary, .bashrc, and .profile only.  Login-profile
+    # files (.bash_profile / .zprofile) are NOT auto-edited: they are
+    # the operator's own front door (and conventionally source .bashrc
+    # themselves) -- auto-editing belongs in .bashrc (the user,
+    # 2026-09-02).  The primary is usually one of the fixed entries,
+    # so dedupe -- it used to earn .bashrc two identical "already in"
+    # lines per raise.
+    for _isf_rc in "$_isf_primary" "${HOME}/.bashrc" "${HOME}/.profile"; do
         [ -f "$_isf_rc" ] || continue
         case " $_isf_seen " in *" $_isf_rc "*) continue ;; esac
         _isf_seen="$_isf_seen $_isf_rc"
+        # NEVER append to a symlinked rc: it is managed elsewhere (a
+        # dot-files repo -- e.g. the readymax ./setup arrangement),
+        # and a host-specific line would land in a tracked file bound
+        # for a public remote.  Bit us live 2026-09-02: an absolute
+        # /home/<user> path appeared in readymax's own
+        # dot-files/bash_profile working tree.
+        if [ -L "$_isf_rc" ]; then
+            log_info "  ${_isf_rc} is a symlink (managed elsewhere); source line not added there"
+            continue
+        fi
         if grep -qF "skewed-emacs/$(basename "$_isf_file")" "$_isf_rc" 2>/dev/null; then
             :  # already rigged -- a no-change earns no line
         else
