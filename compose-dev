@@ -128,7 +128,17 @@ _FILELIST
         _rc_caller="$_rc_caller $(_quote_arg "$_a")"
     done
 
-    eval "$COMPOSE_CMD $_rc_fargs $_rc_caller"
+    # INSTANCES GET THEIR OWN COMPOSE PROJECT.  Without -p, every
+    # instance raised from this clone shared the directory-derived
+    # project, so any instance's up/down acted on ALL of them --
+    # observed live 2026-09-02: a scratch instance's raise stood down
+    # the primary deployment it was meant to leave alone.  The bare
+    # (no-instance) project name is the directory basename, exactly
+    # compose's own default, so existing single-deployment ships see
+    # identical labels and no recreation.
+    _rc_project="$(basename "$SCRIPT_DIR" | tr 'A-Z' 'a-z')${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
+
+    eval "$COMPOSE_CMD -p $(_quote_arg "$_rc_project") $_rc_fargs $_rc_caller"
 }
 
 # The ship's own network name, read from .env where generate-env.sh
@@ -403,7 +413,7 @@ substitute_templates() {
         _st_found=1
     done
     if [ "$_st_found" = 0 ]; then
-        log_warning "templates/ present but no crew ledger in generated/; templates NOT rewritten"
+        log_warning "${BASILISK_VOCAB_TEMPLATES_NO_LEDGER:-templates/ present but no crew ledger in generated/; templates NOT rewritten}"
         rm -f "$_st_env"
         return 0
     fi
@@ -421,7 +431,8 @@ substitute_templates() {
         if grep -q '${BASILISK_POST_[A-Z0-9_]*}' "$_st_out"; then
             log_warning "$(basename "$_st_out") still names postings nobody stands: $(grep -o '${BASILISK_POST_[A-Z0-9_]*}' "$_st_out" | sort -u | tr '\n' ' ')"
         fi
-        log_info "Rewrote $(basename "$_st_t") -> generated/$(basename "$_st_out") from the crew ledger"
+        # shellcheck disable=SC2059  (vocab values are printf formats)
+        log_info "$(printf "${BASILISK_VOCAB_TEMPLATE_REWROTE:-Rewrote %s -> generated/%s from the crew ledger}" "$(basename "$_st_t")" "$(basename "$_st_out")")"
     done
     rm -f "$_st_env"
 }
@@ -444,9 +455,10 @@ take_the_slipway() {
     rm -f "${SCRIPT_DIR}/.conn" 2>/dev/null || true
     exec 9>>"${SCRIPT_DIR}/.slipway" || return 0
     flock -n 9 && return 0
-    log_info "another raise or stand-down holds the slipway; waiting (up to 120s)..."
+    log_info "${BASILISK_VOCAB_SLIPWAY_BUSY:-another raise or stand-down holds the slipway; waiting (up to 120s)...}"
     if ! flock -w 120 9; then
-        log_error "could not take the slipway after 120s -- is another raise wedged? (lock: ${SCRIPT_DIR}/.slipway)"
+        # shellcheck disable=SC2059  (vocab values are printf formats)
+        log_error "$(printf "${BASILISK_VOCAB_SLIPWAY_TIMEOUT:-could not take the slipway after 120s -- is another raise wedged? (lock: %s)}" "${SCRIPT_DIR}/.slipway")"
         exit 1
     fi
 }
@@ -469,11 +481,12 @@ start_services() {
         if [ -n "$_ss_old_net" ] \
            && docker network inspect "$_ss_old_net" >/dev/null 2>&1 \
            && [ -n "$(docker ps -q -f "network=${_ss_old_net}" 2>/dev/null)" ]; then
-            log_info "The standing ship '${_ss_old_net}' goes to his rest before the new raising"
+            # shellcheck disable=SC2059  (vocab values are printf formats)
+            log_info "$(printf "${BASILISK_VOCAB_OLD_SHIP_RETIRES:-The standing ship '%s' goes to his rest before the new raising}" "$_ss_old_net")"
             mkdir -p "${SCRIPT_DIR}/generated"
             run_compose down --remove-orphans \
                 >"${SCRIPT_DIR}/generated/last-stand-down.log" 2>&1 \
-                || log_warning "the old ship went down protesting (see generated/last-stand-down.log)"
+                || log_warning "${BASILISK_VOCAB_OLD_SHIP_PROTEST:-the old ship went down protesting (see generated/last-stand-down.log)}"
             release_ship
         fi
         BASILISK_MINT_FRESH=1
@@ -506,10 +519,11 @@ start_services() {
     muster_crew
 
     _ss_ship="$(_ship_name)"
+    # shellcheck disable=SC2059  (vocab values are printf formats)
     if [ -n "$_ss_services" ]; then
-        log_info "Rousing on the standing ship${_ss_ship:+ ${_ss_ship}}: ${_ss_services}"
+        log_info "$(printf "${BASILISK_VOCAB_ROUSE:-Rousing on the standing ship%s: %s}" "${_ss_ship:+ ${_ss_ship}}" "${_ss_services}")"
     else
-        log_info "All hands to stations; the R.V. ${_ss_ship:-Basilisk} takes the slipway"
+        log_info "$(printf "${BASILISK_VOCAB_SLIPWAY_TAKE:-All hands to stations; the R.V. %s takes the slipway}" "${_ss_ship:-Basilisk}")"
     fi
     # --remove-orphans: EVERY RENAME EPOCH STRANDS THE OLD COMPLEMENT
     # (found the hard way, shelly 2026-08-23).  The current config no
@@ -690,7 +704,13 @@ _ship_network_name() {
         _snn="$BASILISK_SHIP"
     elif [ -f "$_snn_file" ]; then
         _snn="$(head -1 "$_snn_file")"
-    elif [ -f "${SCRIPT_DIR}/.env" ]; then
+    elif [ -f "${SCRIPT_DIR}/.env" ] \
+         && [ "$(sed -n 's/^BASILISK_INSTANCE=//p' "${SCRIPT_DIR}/.env" | head -1)" = "${BASILISK_INSTANCE:-}" ]; then
+        # .env is one shared file, overwritten by whichever instance
+        # generated last -- its network name is only THIS instance's
+        # when its recorded instance matches (bit us live 2026-09-02:
+        # a first vtest raise read the primary's network out of .env
+        # and stood the primary down).
         _snn="$(sed -n 's/^DOCKER_NETWORK_NAME=//p' "${SCRIPT_DIR}/.env" | head -1)"
     fi
     # Fallback for a hull raised by hand before the yard named him:
@@ -706,7 +726,8 @@ release_ship() {
     _rls_tries=0
     while [ "$_rls_tries" -lt 5 ]; do
         if docker network rm "$_rls_net" > /dev/null 2>&1; then
-            log_info "Ship's network '${_rls_net}' was left in use by down; released it (try $((_rls_tries + 1)))"
+            # shellcheck disable=SC2059
+            log_info "$(printf "${BASILISK_VOCAB_NET_RELEASED:-Ship's network '%s' was left in use by down; released it (try %s)}" "$_rls_net" "$((_rls_tries + 1))")"
             return 0
         fi
         _rls_tries=$((_rls_tries + 1))
@@ -714,7 +735,8 @@ release_ship() {
     done
     _rls_holders="$(docker network inspect \
         --format '{{range .Containers}}{{.Name}} {{end}}' "$_rls_net" 2>/dev/null)"
-    log_warning "Ship's network '${_rls_net}' is still in use after down${_rls_holders:+ -- held by: ${_rls_holders}}"
+    # shellcheck disable=SC2059
+    log_warning "$(printf "${BASILISK_VOCAB_NET_HELD:-Ship's network '%s' is still in use after down%s}" "$_rls_net" "${_rls_holders:+ -- held by: ${_rls_holders}}")"
     log_warning "  release it once free: docker network rm ${_rls_net}"
     return 0
 }
@@ -723,7 +745,8 @@ stop_services() {
     take_the_slipway
     _sts_ship="$(_ship_name)"
     if [ -n "$_sts_ship" ]; then
-        log_info "Standing down the ${_sts_ship}: all hands ashore"
+        # shellcheck disable=SC2059
+        log_info "$(printf "${BASILISK_VOCAB_STAND_DOWN:-Standing down the %s: all hands ashore}" "$_sts_ship")"
     else
         log_info "Stopping all services"
     fi
@@ -1159,7 +1182,7 @@ muster_crew() {
         _mc_found=1
     done
     if [ "$_mc_found" = 0 ]; then
-        log_warning "no crew ledger in generated/; the vat raises unmustered rooms (module-slug container names)"
+        log_warning "${BASILISK_VOCAB_NO_LEDGER:-no crew ledger in generated/; the vat raises unmustered rooms (module-slug container names)}"
         rm -f "$_mc_ledger"
         return 0
     fi
@@ -1177,7 +1200,7 @@ muster_crew() {
         END { for (k in name) print name[k] "\t" spec[k] }' "$_mc_ledger" | sort)
     rm -f "$_mc_ledger"
 
-    log_info "Mustering the crew (rooms are known by their keepers):"
+    log_info "${BASILISK_VOCAB_MUSTER_HEAD:-Mustering the crew (rooms are known by their keepers):}"
     while IFS='	' read -r _mc_room _mc_species; do
         [ -n "$_mc_room" ] || continue
         # The ledger species carries provenance (gornskew/gendl:devo-ccl);
@@ -1193,7 +1216,8 @@ muster_crew() {
             # The hand is aboard: same name, same room, watch continues.
             _crew_minted_names="${_crew_minted_names:+$_crew_minted_names }${_mc_cur}"
             _mc_name="$_mc_cur"
-            log_info "  ${_mc_name}'s $(printf '%s' "$_mc_room" | tr '-' ' ') stands its watch"
+            # shellcheck disable=SC2059
+            log_info "  $(printf "${BASILISK_VOCAB_MUSTER_STANDS:-%s's %s stands its watch}" "$_mc_name" "$(printf '%s' "$_mc_room" | tr '-' ' ')")"
         else
             # No container bearing the name: mint a relief.  Unique per
             # run via _crew_minted_names, against every name the docker
@@ -1214,10 +1238,11 @@ muster_crew() {
                 _mc_tries=$((_mc_tries + 1))
                 [ "$_mc_tries" -ge 20 ] && break
             done
+            # shellcheck disable=SC2059
             if [ -n "$_mc_cur" ]; then
-                log_info "  ${_mc_name} relieves ${_mc_cur} in the $(printf '%s' "$_mc_room" | tr '-' ' ')"
+                log_info "  $(printf "${BASILISK_VOCAB_MUSTER_RELIEVES:-%s relieves %s in the %s}" "$_mc_name" "$_mc_cur" "$(printf '%s' "$_mc_room" | tr '-' ' ')")"
             else
-                log_info "  ${_mc_name} musters into the $(printf '%s' "$_mc_room" | tr '-' ' ')"
+                log_info "  $(printf "${BASILISK_VOCAB_MUSTER_JOINS:-%s musters into the %s}" "$_mc_name" "$(printf '%s' "$_mc_room" | tr '-' ' ')")"
             fi
         fi
         printf '%s=%s\n' "$_mc_var" "$_mc_name" >> "$_mc_out"
@@ -1236,7 +1261,7 @@ mint_crew_identities() {
         [ -s "$_ci_tmp" ] && log_warning "compose ps -q (minting) came back empty: $(head -1 "$_ci_tmp")"
         _ci_net="$(ship_network)"
         _ci_ids="$(docker ps -q ${_ci_net:+-f "network=${_ci_net}"} 2>/dev/null)"
-        [ -n "$_ci_ids" ] && log_info "  (crew found by network lookup instead)"
+        [ -n "$_ci_ids" ] && log_info "  ${BASILISK_VOCAB_CREW_BY_NET:-(crew found by network lookup instead)}"
     fi
     rm -f "$_ci_tmp"
     [ -n "$_ci_ids" ] || return 0
@@ -1293,7 +1318,8 @@ _ci_image="$(docker inspect --format \
             "printf 'NAME=%s\nSPECIES=%s\nPOSTING=%s\nROLE=%s\n' '$_ci_mint_name' '$_ci_species' '$_ci_posting' '$_ci_role' > /tmp/skewed-crew-identity" \
             2>/dev/null
         then
-            log_success "  $(_crew_display "$_ci_name") (module sku ${_ci_species}) takes the Oath of Service${_ci_ship:+ to the R.V. ${_ci_ship}}"
+            # shellcheck disable=SC2059
+        log_success "  $(_crew_display "$_ci_name") (module sku ${_ci_species}) ${BASILISK_VOCAB_OATH:-takes the Oath of Service}${_ci_ship:+ $(printf "${BASILISK_VOCAB_OATH_TO:-to the R.V. %s}" "$_ci_ship")}"
         else
             log_warning "  ${_ci_name}: could not write crew identity (no shell/writable rootfs?)"
         fi
@@ -1313,7 +1339,7 @@ _ci_image="$(docker inspect --format \
 # once, event-driven, replacing the old 5x2s blind retry loop.
 # =============================================================================
 merge_mcp_configs() {
-    log_info "Opening hailing frequencies for cyborg passengers (MCP configurations, JSON + TOML)..."
+    log_info "${BASILISK_VOCAB_MCP_OPEN:-Opening hailing frequencies for cyborg passengers (MCP configurations, JSON + TOML)...}"
 
     # Resolve the ready room's keeper ONCE and drive everything below
     # through plain docker on the container id: compose-level service
@@ -1323,7 +1349,8 @@ merge_mcp_configs() {
     _mcp_room="$(captain_room)"
     _mcp_cap="$(room_container "$_mcp_room")"
     if [ -z "$_mcp_cap" ]; then
-        log_warning "no keeper found for the ${_mcp_room}; skipping MCP config merge"
+        # shellcheck disable=SC2059
+        log_warning "$(printf "${BASILISK_VOCAB_NO_KEEPER_MERGE:-no keeper found for the %s; skipping MCP config merge}" "$_mcp_room")"
         return 1
     fi
 
@@ -1421,7 +1448,7 @@ merge_mcp_configs() {
                 (skewed-merge-all-mcp-configs \"${_mcp_stage}\"))" \
         > /dev/null 2>&1
     then
-        log_success "Hailing frequencies posted for container CLI, Windows, Codex, and Grok"
+        log_success "${BASILISK_VOCAB_MCP_POSTED:-Hailing frequencies posted for container CLI, Windows, Codex, and Grok}"
 
         # Copy the platform-appropriate Claude Desktop config back to the
         # host clone (regression fix: the pre-POSIX compose-dev did this).
@@ -1550,7 +1577,7 @@ crew_muster() {
     _cm_services=$(run_compose config --services 2>/dev/null | tr -d '\r' | sort)
     [ -n "$_cm_services" ] || return 0
 
-    log_info "Crew muster:"
+    log_info "${BASILISK_VOCAB_ROSTER_HEAD:-Crew muster:}"
     _cm_have_pilot=0
     for _cm_svc in $_cm_services; do
         # The container name is the keeper's minted name now, so resolve
@@ -1637,7 +1664,8 @@ crew_muster() {
                 for _cm_req in $_cm_requires; do
                     case ",$_cm_caps," in
                         *",$_cm_req,"*) ;;
-                        *) log_warning "    ${_cm_svc}: stands a post requiring \"${_cm_req}\" but species ${_cm_img} does not list it (arranged aboard?)" ;;
+                        # shellcheck disable=SC2059
+        *) log_warning "    $(printf "${BASILISK_VOCAB_CAP_MISSING:-%s: stands a post requiring \"%s\" but species %s does not list it (arranged aboard?)}" "$_cm_svc" "$_cm_req" "$_cm_img")" ;;
                     esac
                 done
                 IFS=$_cm_old_ifs
@@ -1679,10 +1707,10 @@ validate_services() {
         # he would know.  Success is still reported -- an empty ship is
         # not a failed one -- but never silently.
         log_warning "=================================================================="
-        log_warning "SHIP IS CREWLESS: compose reports NO running containers."
-        log_warning "Either no one boarded (check the compose output and the journal"
-        log_warning "above) or she is deliberately riding empty at anchor."
-        log_warning "Nothing to validate; reporting success on an EMPTY ship."
+        log_warning "${BASILISK_VOCAB_EMPTY_HEAD:-SHIP IS CREWLESS: compose reports NO running containers.}"
+        log_warning "${BASILISK_VOCAB_EMPTY_WHY1:-Either no one boarded (check the compose output and the journal}"
+        log_warning "${BASILISK_VOCAB_EMPTY_WHY2:-above) or she is deliberately riding empty at anchor.}"
+        log_warning "${BASILISK_VOCAB_EMPTY_VALIDATE:-Nothing to validate; reporting success on an EMPTY ship.}"
         log_warning "=================================================================="
         return 0
     fi
@@ -1712,7 +1740,7 @@ validate_services() {
         if [ "$(docker inspect --format \
                 '{{index .Config.Labels "basilisk.unhurried"}}' \
                 "$_vs_id" 2>/dev/null)" = "true" ]; then
-            log_info "  $(_crew_display "$_vs_name"): warming up in the background (an unhurried hand; not gating the raise)"
+            log_info "  $(_crew_display "$_vs_name"): ${BASILISK_VOCAB_UNHURRIED:-warming up in the background (an unhurried hand; not gating the raise)}"
             continue
         fi
         _vs_svc="$(docker inspect --format \
@@ -1756,7 +1784,8 @@ validate_services() {
 
     # One line states the watch for everyone; a hand is named here only
     # when his stated warm-up buys him more than the standard budget.
-    log_info "The gangway watch: hailing each room every ${_vs_poll}s (${_vs_budget_default}s and ${_vs_retries_max} reliefs allowed apiece)"
+    # shellcheck disable=SC2059
+    log_info "$(printf "${BASILISK_VOCAB_VALIDATE_HEAD:-The gangway watch: hailing each room every %ss (%ss and %s reliefs allowed apiece)}" "$_vs_poll" "$_vs_budget_default" "$_vs_retries_max")"
     for _vs_name in $_vs_watched; do
         _vs_san="$(_vs_sanitize "$_vs_name")"
         eval "_vs_budget=\$_vs_budget_${_vs_san}"
@@ -1821,7 +1850,8 @@ validate_services() {
     done
 
     if [ -z "$VALIDATED_FAILED" ]; then
-        log_success "All hands validated in ${_vs_total}s; the ship is away"
+        # shellcheck disable=SC2059
+        log_success "$(printf "${BASILISK_VOCAB_VALIDATED_ALL:-All hands validated in %ss; the ship is away}" "$_vs_total")"
         crew_muster
         return 0
     fi
@@ -1855,7 +1885,8 @@ connect_emacs() {
     if [ -n "$_ce_cap" ]; then
         docker exec -it "$_ce_cap" emacsclient -t
     else
-        log_error "no keeper found for the ready room -- is the ship up?"
+        # shellcheck disable=SC2059
+        log_error "$(printf "${BASILISK_VOCAB_NO_KEEPER_UP:-no keeper found for the %s -- is the ship up?}" "$(captain_room)")"
         return 1
     fi
 }
@@ -1867,7 +1898,7 @@ pull_images() {
     fi
 
     if [ -n "${PULL_ALWAYS}" ]; then
-        log_info "Beaming the whole complement aboard fresh (PULL_ALWAYS set)"
+        log_info "${BASILISK_VOCAB_PULL_ALL:-Beaming the whole complement aboard fresh (PULL_ALWAYS set)}"
         run_compose pull
         return
     fi
@@ -1895,11 +1926,12 @@ $_svc_img_pairs
 _PAIRS
 
     if [ -z "$_missing" ]; then
-        log_success "All crew already onboard, nobody to be beamed aboard"
+        log_success "${BASILISK_VOCAB_PULL_NONE:-All crew already onboard, nobody to be beamed aboard}"
         return
     fi
 
-    log_info "Beaming aboard: $_missing"
+    # shellcheck disable=SC2059
+    log_info "$(printf "${BASILISK_VOCAB_PULL_SOME:-Beaming aboard: %s}" "$_missing")"
     # shellcheck disable=SC2086  (word-split intentional: service names)
     run_compose pull $_missing
 }
@@ -1987,14 +2019,14 @@ _skew_captain_aboard() {
 _skew_no_captain() {
     _snc_name="$(_skew_captain)"
     if ! command -v docker >/dev/null 2>&1; then
-        printf '%s: docker not found on this host -- no way to reach the Captain.\n' "$1" >&2
+        printf '@NC_NO_DOCKER@\n' "$1" >&2
     elif docker inspect "$_snc_name" >/dev/null 2>&1; then
-        printf '%s: the Captain is aboard but not on watch (container "%s" is not running).\n' "$1" "$_snc_name" >&2
-        printf '  Rouse the Captain:  docker start %s\n' "$_snc_name" >&2
+        printf '@NC_NOT_RUNNING@\n' "$1" "$_snc_name" >&2
+        printf '@NC_START@\n' "$_snc_name" >&2
     else
-        printf '%s: no Captain aboard this ship (no "%s" container).\n' "$1" "$_snc_name" >&2
-        printf '  Bring one aboard:  ./basilisk up\n' >&2
-        printf '  Another ship on this box?  %s @<instance>\n' "$1" >&2
+        printf '@NC_ABSENT@\n' "$1" "$_snc_name" >&2
+        printf '@NC_BRING_UP@\n' >&2
+        printf '@NC_INSTANCE@\n' "$1" >&2
     fi
     return 1
 }
@@ -2058,7 +2090,17 @@ SNIPPET
     # (BASILISK_CREW_CONSOLE=... on such a fork).
     _isf_room="$(captain_room)"
     _isf_room_key="$(printf '%s' "$_isf_room" | tr 'a-z-' 'A-Z_')"
-    sed "s|@BASILISK_DIR@|${SCRIPT_DIR}|g; s|@CAPTAIN_ROOM_KEY@|${_isf_room_key}|g; s|@CAPTAIN_ROOM@|${_isf_room}|g" \
+    # The no-captain messages ride in as placeholders too, so a fork's
+    # vocabulary reaches the generated helpers.  Values are printf
+    # formats; they must avoid single quotes, `|' and `&' (they land
+    # inside a single-quoted printf format via this sed).
+    _isf_nc_no_docker="${BASILISK_VOCAB_NOCAP_NO_DOCKER:-%s: docker not found on this host -- no way to reach the Captain.}"
+    _isf_nc_not_running="${BASILISK_VOCAB_NOCAP_NOT_RUNNING:-%s: the Captain is aboard but not on watch (container \"%s\" is not running).}"
+    _isf_nc_start="${BASILISK_VOCAB_NOCAP_START:-  Rouse the Captain:  docker start %s}"
+    _isf_nc_absent="${BASILISK_VOCAB_NOCAP_ABSENT:-%s: no Captain aboard this ship (no \"%s\" container).}"
+    _isf_nc_bring_up="${BASILISK_VOCAB_NOCAP_BRING_UP:-  Bring one aboard:  ./basilisk up}"
+    _isf_nc_instance="${BASILISK_VOCAB_NOCAP_INSTANCE:-  Another ship on this box?  %s @<instance>}"
+    sed "s|@BASILISK_DIR@|${SCRIPT_DIR}|g; s|@CAPTAIN_ROOM_KEY@|${_isf_room_key}|g; s|@CAPTAIN_ROOM@|${_isf_room}|g; s|@NC_NO_DOCKER@|${_isf_nc_no_docker}|g; s|@NC_NOT_RUNNING@|${_isf_nc_not_running}|g; s|@NC_START@|${_isf_nc_start}|g; s|@NC_ABSENT@|${_isf_nc_absent}|g; s|@NC_BRING_UP@|${_isf_nc_bring_up}|g; s|@NC_INSTANCE@|${_isf_nc_instance}|g" \
         "${_isf_tmp}" > "${_isf_tmp}.sub" \
         && mv "${_isf_tmp}.sub" "${_isf_tmp}"
 
@@ -2129,7 +2171,8 @@ SNIPPET
 refresh_emacs_runtime_config() {
     _rerc_room="$(captain_room)"
     _rerc_cap="$(room_container "$_rerc_room")"
-    [ -n "$_rerc_cap" ] || { log_warning "no keeper for the ${_rerc_room}; skipping Emacs service refresh"; return 0; }
+    # shellcheck disable=SC2059
+    [ -n "$_rerc_cap" ] || { log_warning "$(printf "${BASILISK_VOCAB_NO_KEEPER_REFRESH:-no keeper for the %s; skipping Emacs service refresh}" "$_rerc_room")"; return 0; }
     _refresh_result="$(docker exec "$_rerc_cap" emacsclient --eval \
         "(progn
             (defvar skewed-runtime-services-refresh-armed nil)
@@ -2170,20 +2213,20 @@ refresh_emacs_runtime_config() {
 
 show_skew_welcome() {
     echo ""
-    echo "Services are Up.  The complement is aboard."
+    echo "${BASILISK_VOCAB_WELCOME:-Services are Up.  The complement is aboard.}"
     echo ""
-    echo "Shell Commands for the Basilisk Stack"
+    echo "${BASILISK_VOCAB_WELCOME_HEAD:-Shell Commands for the Basilisk Stack}"
     echo ""
     _ssw_term="${BASILISK_VOCAB_HAIL_TERM:-rmax}"
     _ssw_gui="${BASILISK_VOCAB_HAIL_GUI:-grmax}"
-    printf "%b\n" "  \`${_ssw_term}\`   ${BLUE}-- hail the Captain: terminal emacsclient (attach here)${NC}"
+    printf "%b\n" "  \`${_ssw_term}\`   ${BLUE}-- ${BASILISK_VOCAB_HAIL_TERM_DESC:-hail the Captain: terminal emacsclient (attach here)}${NC}"
     printf "%b\n" "  \`${_ssw_gui}\`  ${BLUE}-- graphical emacsclient (opens new window)${NC}"
-    printf "%b\n" "  \`${_ssw_term} @<instance>\` ${BLUE}-- reach another ship on this box${NC}"
-    printf "%b\n" "  ${BLUE}(\`eskew\`/\`egskew\` stay aboard as aliases)${NC}"
+    printf "%b\n" "  \`${_ssw_term} @<instance>\` ${BLUE}-- ${BASILISK_VOCAB_HAIL_INSTANCE_DESC:-reach another ship on this box}${NC}"
+    printf "%b\n" "  ${BLUE}${BASILISK_VOCAB_HAIL_ALIASES:-(\`eskew\`/\`egskew\` stay aboard as aliases)}${NC}"
     echo ""
     echo "NOTE: Please exit this shell with Ctrl-D before doing './basilisk down'."
-    echo "      (The next bare 'up' raises a NEW ship: the old one is buried"
-    echo "      under his own name in the log of ships, crew and all.)"
+    echo "      ${BASILISK_VOCAB_WELCOME_NOTE1:-(The next bare 'up' raises a NEW ship: the old one is buried}"
+    echo "      ${BASILISK_VOCAB_WELCOME_NOTE2:-under his own name in the log of ships, crew and all.)}"
     echo ""
 }
 

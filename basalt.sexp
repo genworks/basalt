@@ -123,6 +123,10 @@
    :hostname "console"
    :description "The interactive control console, and the longest-lived process in the stack."
    :type "emacs-lisp"
+   ;; Display sku: the console runs the Readymacs configuration; the
+   ;; underlying image ships under the upstream sku until Readymacs
+   ;; images are published.
+   :sku-label "readymacs"
    :mcp t
    :registry-namespace "gornskew"
    :image "${EMACS_IMAGE_BASE:-readymax}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}"
@@ -131,7 +135,14 @@
    :environment (("WEBTERM" . "${WEBTERM:-ttyd}")
                  ("WEBTERM_PORT" . "6942")
                  ("TERM" . "xterm-256color")
-                 ("COLORTERM" . "truecolor"))
+                 ("COLORTERM" . "truecolor")
+                 ;; The console flies the deployment's own marquee
+                 ;; (dot-files/console-banner.txt) rather than the
+                 ;; image's built-in guises; honored by the dashboard
+                 ;; once the image carries the banner-override hook.
+                 ("SKEWED_DASHBOARD_BANNER_FILE" . "/projects/basalt/dot-files/console-banner.txt")
+                 ("SKEWED_DASHBOARD_BANNER_TITLE" . "Ready when you are.")
+                 ("SKEWED_DASHBOARD_FOOTER" . "Brought to you by 𝙶𝚎𝚗𝚠𝚘𝚛𝚔𝚜 𝙸𝚗𝚝𝚎𝚛𝚗𝚊𝚝𝚒𝚘𝚗𝚊𝚕"))
    ;; The console's credentials and local config, mounted from the host.
    :volumes ((:source "${USER_HOME}/.claude/.credentials.json"
               :target "/home/emacs-user/.claude/.credentials.json")

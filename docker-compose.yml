@@ -41,6 +41,9 @@ services:
       - 'WEBTERM_PORT=6942'
       - 'TERM=xterm-256color'
       - 'COLORTERM=truecolor'
+      - 'SKEWED_DASHBOARD_BANNER_FILE=/projects/basalt/dot-files/console-banner.txt'
+      - 'SKEWED_DASHBOARD_BANNER_TITLE=Ready when you are.'
+      - 'SKEWED_DASHBOARD_FOOTER=Brought to you by 𝙶𝚎𝚗𝚠𝚘𝚛𝚔𝚜 𝙸𝚗𝚝𝚎𝚛𝚗𝚊𝚝𝚒𝚘𝚗𝚊𝚕'
       - TZ=${TZ:-Etc/UTC}
     volumes:
       - type: bind

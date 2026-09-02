@@ -567,6 +567,9 @@ filters those out and keeps only top-level [mcp_servers.NAME] tables."
           (push (format "     :type \"%s\"" type) lines))
         (when lisp-impl
           (push (format "     :lisp-impl \"%s\"" lisp-impl) lines))
+        (let ((sku (skewed--service-sku svc)))
+          (when sku
+            (push (format "     :sku \"%s\"" sku) lines)))
         (when mcp
           (push "     :mcp t" lines))
         (when http-port
@@ -892,6 +895,28 @@ rode along in the string is dropped."
          (repo (if (string-match "\\`\\([^:]*\\):" s) (match-string 1 s) s)))
     (file-name-nondirectory repo)))
 
+(defun skewed--service-sku (svc)
+  "A short display sku for SVC: the species repo, plus the
+implementation half of the tag when it carries one
+(gendl:devo-ccl -> gendl-ccl; readymax:devo-full -> readymax).  An
+articles-level :sku-label on the crew entry overrides -- how a
+register fork labels a room whose image still ships under the
+upstream sku (a basalt console flying readymax shows readymacs).
+Surfaced as :sku in services-generated.el for the dashboard's
+backend listings."
+  (or (plist-get svc :sku-label)
+      (let* ((species (skewed--resolve-compose-defaults
+                       (or (plist-get svc :species) (plist-get svc :image) "")))
+             (bare (file-name-nondirectory species))
+             (repo (if (string-match "\\`\\([^:]*\\):" bare) (match-string 1 bare) bare))
+             (tag (and (string-match ":\\(.*\\)\\'" bare) (match-string 1 bare)))
+             (impl (and tag (string-match "-\\([a-z0-9]+\\)\\'" tag)
+                        (match-string 1 tag))))
+        (if (and impl (member impl '("ccl" "sbcl" "acl" "clasp" "ecl"
+                                     "abcl" "clisp" "cmucl")))
+            (concat repo "-" impl)
+          (unless (string-empty-p repo) repo)))))
+
 (defun skewed--derive-names (config &optional glossary)
   "Fill in each crew entry's :name where the articles left it out.
 Only :species is required of a service.  An explicit :name wins -- it
@@ -1031,28 +1056,31 @@ glossary alone, never shipped basilisk code."
     (push "# DO NOT EDIT - Generated from glossary.sexp :vocabulary" lines)
     (push "# Sourced by compose-dev.  Register vocabulary lives in the" lines)
     (push "# glossary, never in shipped code." lines)
-    (cl-flet ((emit (key val)
-                (when val
-                  (push (format "%s='%s'" key
-                                (replace-regexp-in-string "'" "'\\\\''" val))
-                        lines))))
-      (emit "BASILISK_VOCAB_STOWAWAY_DESIGNATOR"
-            (plist-get vocab :stowaway-designator))
-      (cl-loop for (role title) on (plist-get vocab :muster-titles) by #'cddr
-               ;; Hyphens become underscores: :first-officer must emit
-               ;; a legal POSIX name (BASILISK_VOCAB_TITLE_FIRST_OFFICER),
-               ;; or sourcing vocabulary.env fails at up-time.
-               do (emit (format "BASILISK_VOCAB_TITLE_%s"
-                                (upcase (replace-regexp-in-string
-                                         "-" "_" (substring (symbol-name role) 1))))
-                        title))
-      (emit "BASILISK_VOCAB_NO_INGRESS_WARNING"
-            (plist-get vocab :no-ingress-warning))
-      ;; The hailing calls: a fork may rename rmax/grmax; the yard's
-      ;; own words stand as the defaults everywhere the shell reads
-      ;; these (install_shell_functions and the welcome).
-      (emit "BASILISK_VOCAB_HAIL_TERM" (plist-get vocab :hail-term))
-      (emit "BASILISK_VOCAB_HAIL_GUI" (plist-get vocab :hail-gui)))
+    (cl-flet* ((posix-name (sym &optional prefix)
+                 ;; Hyphens become underscores: :first-officer must emit
+                 ;; a legal POSIX name (BASILISK_VOCAB_TITLE_FIRST_OFFICER),
+                 ;; or sourcing vocabulary.env fails at up-time.
+                 (format "BASILISK_VOCAB_%s%s" (or prefix "")
+                         (upcase (replace-regexp-in-string
+                                  "-" "_" (substring (symbol-name sym) 1)))))
+               (emit (key val)
+                 (when val
+                   (push (format "%s='%s'" key
+                                 (replace-regexp-in-string "'" "'\\\\''" val))
+                         lines))))
+      ;; GENERIC EMISSION: every string-valued key in :vocabulary
+      ;; becomes BASILISK_VOCAB_<KEY> -- adding a coined string to the
+      ;; shell needs only a ${BASILISK_VOCAB_X:-canon default} there
+      ;; and a :x entry in the fork's glossary, never another emitter
+      ;; edit.  Values may be printf format strings (%s slots); the
+      ;; shell side prints them with printf.  :muster-titles is the
+      ;; one structured entry, flattened to TITLE_<POSTING> keys.
+      (cl-loop for (key val) on vocab by #'cddr
+               do (cond ((eq key :muster-titles)
+                         (cl-loop for (role title) on val by #'cddr
+                                  do (emit (posix-name role "TITLE_") title)))
+                        ((stringp val)
+                         (emit (posix-name key) val)))))
     (concat (string-join (nreverse lines) "\n") "\n")))
 
 (defun skewed--filter-berthed (config &optional base-names)

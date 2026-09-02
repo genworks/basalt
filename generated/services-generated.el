@@ -16,6 +16,7 @@
     (:name "console"
      :type "emacs-lisp"
      :lisp-impl "Emacs"
+     :sku "readymacs"
      :mcp t
      :http-host "console"
      :http-port 7080
@@ -23,6 +24,7 @@
     (:name "front-line"
      :type "common-lisp"
      :lisp-impl "CCL"
+     :sku "gendl-ccl"
      :mcp t
      :http-host "front-line"
      :http-port 9080
@@ -33,6 +35,7 @@
     (:name "engineering"
      :type "common-lisp"
      :lisp-impl "SBCL"
+     :sku "gendl-sbcl"
      :mcp t
      :http-host "engineering"
      :http-port 9090
@@ -42,6 +45,7 @@
     )
     (:name "monitor"
      :type "utility"
+     :sku "autoheal"
     )
    ))
 ;; Services configuration generated from basalt.sexp.

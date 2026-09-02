@@ -150,6 +150,12 @@ _mint_ship_name() {
 
 SHIP_FILE=".ship${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
 SHIPS_LOG=".ships-log"
+
+# A fork's register vocabulary (generated from its glossary).  This
+# script announces the minting and the burial, so it reads the
+# dictionary the same way compose-dev does; canon ships no glossary
+# and every default below stands.
+[ -f "generated/vocabulary.env" ] && . "generated/vocabulary.env"
 if [ -n "${BASILISK_SHIP:-}" ]; then
     :  # inherited pin wins; do not re-mint or overwrite the log entry
 elif [ -f "$SHIP_FILE" ] && [ -z "${BASILISK_MINT_FRESH:-}" ]; then
@@ -171,11 +177,15 @@ else
         printf '%s\traised %s\tburied %s%s\n' \
             "$_old_ship" "$_raised" "$(date +%Y-%m-%dT%H:%M)" \
             "${BASILISK_INSTANCE:+	instance $BASILISK_INSTANCE}" >> "$SHIPS_LOG"
-        echo "The ship $_old_ship is buried in the log of ships ($SHIPS_LOG)"
+        # shellcheck disable=SC2059  (vocab values are printf formats)
+        printf "${BASILISK_VOCAB_SHIP_BURIED:-The ship %s is buried in the log of ships (%s)}\n" \
+            "$_old_ship" "$SHIPS_LOG"
     fi
     BASILISK_SHIP="$(_mint_ship_name)"
     printf '%s\n' "$BASILISK_SHIP" > "$SHIP_FILE"
-    echo "Minted ship's name: $BASILISK_SHIP (kept in $SHIP_FILE)"
+    # shellcheck disable=SC2059  (vocab values are printf formats)
+    printf "${BASILISK_VOCAB_SHIP_MINTED:-Minted ship's name: %s (kept in %s)}\n" \
+        "$BASILISK_SHIP" "$SHIP_FILE"
 fi
 NETWORK_NAME="$(printf '%s' "$BASILISK_SHIP" | tr 'A-Z' 'a-z')"
 
