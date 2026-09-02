@@ -952,8 +952,20 @@ _crew_title_for_postings() {
 
 # The standing ship's minted name, read from .ship ("Zhuryss").
 # Empty when no ship has been minted yet.
+# The console room's SERVICE SLUG, from the crew ledger -- a fork's
+# console may carry its own hostname (BASILISK_POST_CAPTAIN_ROOM in
+# generated/crew.env).  Env override outranks the ledger; the class
+# slug is the last fallback.  Same resolution mcp-exec and the
+# watchdog use.
+captain_room() {
+    _capr="$(sed -n 's/^BASILISK_POST_CAPTAIN_ROOM=//p' "${SCRIPT_DIR}/generated/crew.env" 2>/dev/null | head -1)"
+    printf '%s' "${BASILISK_CAPTAIN:-${_capr:-ready-room}}"
+}
+
 _ship_name() {
-    head -1 "${SCRIPT_DIR}/.ship" 2>/dev/null
+    # An instance ship's name is minted into .ship-<instance>; the
+    # unsuffixed file belongs to the historical single-stack ship.
+    head -1 "${SCRIPT_DIR}/.ship${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}" 2>/dev/null
 }
 
 # Pretty room name from a room slug: "engine-room" -> "Engine Room".
@@ -1308,14 +1320,15 @@ merge_mcp_configs() {
     # resolution failed intermittently mid-raise (2026-08-23, cause
     # under observation via room_container's logging), and each of the
     # seven compose-addressed steps below then failed in its own way.
-    _mcp_cap="$(room_container ready-room)"
+    _mcp_room="$(captain_room)"
+    _mcp_cap="$(room_container "$_mcp_room")"
     if [ -z "$_mcp_cap" ]; then
-        log_warning "no keeper found for the ready room; skipping MCP config merge"
+        log_warning "no keeper found for the ${_mcp_room}; skipping MCP config merge"
         return 1
     fi
 
     case " ${VALIDATED_OK:-} " in
-        *" ready-room "*) ;;
+        *" ${_mcp_room} "*) ;;
         *)
             # The ready room was not validated this run (single-service
             # up, failed validation, or already running from before):
@@ -1837,8 +1850,8 @@ show_status() {
 }
 
 connect_emacs() {
-    log_info "Connecting to Emacs via emacsclient (the ready room)"
-    _ce_cap="$(room_container ready-room)"
+    log_info "Connecting to Emacs via emacsclient (the console room)"
+    _ce_cap="$(room_container "$(captain_room)")"
     if [ -n "$_ce_cap" ]; then
         docker exec -it "$_ce_cap" emacsclient -t
     else
@@ -1962,8 +1975,8 @@ install_shell_functions() {
 _skew_captain() {
     _sc_prefix="${BASILISK_PREFIX:-${BASILISK_INSTANCE:+$BASILISK_INSTANCE-}}"
     _sc_roll="@BASILISK_DIR@/.muster${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
-    _sc_name="${BASILISK_CAPTAIN:-$(sed -n 's/^BASILISK_CREW_READY_ROOM=//p' "$_sc_roll" 2>/dev/null | head -1)}"
-    printf '%s%s' "$_sc_prefix" "${_sc_name:-ready-room}"
+    _sc_name="${BASILISK_CAPTAIN:-$(sed -n 's/^BASILISK_CREW_@CAPTAIN_ROOM_KEY@=//p' "$_sc_roll" 2>/dev/null | head -1)}"
+    printf '%s%s' "$_sc_prefix" "${_sc_name:-@CAPTAIN_ROOM@}"
 }
 
 _skew_captain_aboard() {
@@ -2039,8 +2052,14 @@ SNIPPET
 
     # The snippet heredoc is quoted (no interpolation at write time), so
     # the clone's own path rides in via a placeholder: the helpers must
-    # find THIS clone's muster roll from any shell, anywhere.
-    sed "s|@BASILISK_DIR@|${SCRIPT_DIR}|g" "${_isf_tmp}" > "${_isf_tmp}.sub" \
+    # find THIS clone's muster roll from any shell, anywhere.  The
+    # console's room slug rides in the same way -- a fork's console may
+    # carry its own hostname, and the muster roll keys by room slug
+    # (BASILISK_CREW_CONSOLE=... on such a fork).
+    _isf_room="$(captain_room)"
+    _isf_room_key="$(printf '%s' "$_isf_room" | tr 'a-z-' 'A-Z_')"
+    sed "s|@BASILISK_DIR@|${SCRIPT_DIR}|g; s|@CAPTAIN_ROOM_KEY@|${_isf_room_key}|g; s|@CAPTAIN_ROOM@|${_isf_room}|g" \
+        "${_isf_tmp}" > "${_isf_tmp}.sub" \
         && mv "${_isf_tmp}.sub" "${_isf_tmp}"
 
     # The rename itself: shipped code stays verbatim -- it is a
@@ -2108,8 +2127,9 @@ SNIPPET
 }
 
 refresh_emacs_runtime_config() {
-    _rerc_cap="$(room_container ready-room)"
-    [ -n "$_rerc_cap" ] || { log_warning "no keeper for the ready room; skipping Emacs service refresh"; return 0; }
+    _rerc_room="$(captain_room)"
+    _rerc_cap="$(room_container "$_rerc_room")"
+    [ -n "$_rerc_cap" ] || { log_warning "no keeper for the ${_rerc_room}; skipping Emacs service refresh"; return 0; }
     _refresh_result="$(docker exec "$_rerc_cap" emacsclient --eval \
         "(progn
             (defvar skewed-runtime-services-refresh-armed nil)
