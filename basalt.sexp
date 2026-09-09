@@ -185,7 +185,7 @@
    :hostname "front-line"
    :description "Front-line interactive service: assists the console and its users."
    :type "common-lisp"
-   :registry-namespace "gornskew"
+   :registry-namespace "${GENDL_IMAGE_NAMESPACE:-gornskew}"
    :image "${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-ccl"
    :ports ((:name "http" :host ${GENDL_CCL_HOST_PORT:-19080} :container 9080)
            (:name "swank" :container 4200))
@@ -205,7 +205,7 @@
    :hostname "engineering"
    :description "The engineering service: computation and geometry for the stack and its users."
    :type "common-lisp"
-   :registry-namespace "gornskew"
+   :registry-namespace "${GENDL_IMAGE_NAMESPACE:-gornskew}"
    :image "${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-sbcl"
    :ports ((:name "http" :host ${GENDL_SBCL_HOST_PORT:-29080} :container 9090)
            (:name "swank" :container 4210))
