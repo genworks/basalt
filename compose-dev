@@ -593,11 +593,13 @@ start_services() {
 # that quietly fail to launch.  Checking one registry looks like checking
 # both, which is exactly why this is now automatic.
 #
-# Deliberately conservative.  It only rewrites entries whose command already
-# points at some */mcp/mcp-exec, it writes nothing when nothing is stale
-# (the normal case), and it replaces the file atomically after a backup --
-# that file also holds live Claude Code state, so it is never rewritten
-# wholesale from a stale read.
+# Deliberately conservative.  It only rewrites entries whose command points
+# at a */mcp/mcp-exec that no longer exists on disk (a moved or deleted
+# checkout) -- another yard's live launcher is left alone, so two stacks
+# raised on one host share the registry (2026-09-09) -- it writes nothing
+# when nothing is stale (the normal case), and it replaces the file
+# atomically after a backup -- that file also holds live Claude Code state,
+# so it is never rewritten wholesale from a stale read.
 # =============================================================================
 refresh_host_claude_mcp() {
     _hcm_file="${HOME}/.claude.json"
@@ -636,8 +638,10 @@ for name, cfg in servers.items():
     if not isinstance(cfg, dict):
         continue
     cmd = cfg.get("command")
-    # Only ever retarget something that is already an mcp-exec launcher.
-    if isinstance(cmd, str) and cmd.endswith("/mcp/mcp-exec") and cmd != target:
+    # Only ever retarget an mcp-exec launcher whose checkout is gone;
+    # a launcher that still exists belongs to another live yard.
+    if (isinstance(cmd, str) and cmd.endswith("/mcp/mcp-exec")
+            and cmd != target and not os.path.exists(cmd)):
         cfg["command"] = target
         changed.append(name)
 

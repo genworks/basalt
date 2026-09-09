@@ -17,7 +17,11 @@
 # machineID, userID, seen-notification state, migration flags and per
 # project history alongside mcpServers.  Copying a generated file over
 # it would work exactly once and quietly discard all of that.  So this
-# replaces ONE key and leaves the other thirty alone.
+# touches ONE key and leaves the other thirty alone -- and within that
+# key it replaces only this yard's own servers: an entry whose launcher
+# is another yard's live mcp/mcp-exec stays, so two stacks raised on
+# one host merge into one registry (2026-09-09).  Entries whose
+# launcher no longer exists on disk are dropped.
 #
 # Source is mcp/claude-code-mcp.json, written by `basilisk up`.  Always
 # the host form -- Claude Code runs inside WSL, so the wsl.exe wrapper
@@ -59,8 +63,21 @@ if os.path.exists(dest):
 else:
     cfg, backup = collections.OrderedDict(), None
 
-before = sorted((cfg.get("mcpServers") or {}).keys())
-cfg["mcpServers"] = servers
+old = cfg.get("mcpServers") or {}
+before = sorted(old.keys())
+mine = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(src)), "mcp-exec"))
+merged, kept = collections.OrderedDict(), []
+for name, entry in old.items():
+    cmd = entry.get("command") if isinstance(entry, dict) else None
+    launcher = isinstance(cmd, str) and cmd.endswith("/mcp/mcp-exec")
+    ours = launcher and os.path.exists(cmd) and os.path.realpath(cmd) == mine
+    stale = launcher and not os.path.exists(cmd)
+    if name in servers or ours or stale:
+        continue
+    merged[name] = entry
+    kept.append(name)
+merged.update(servers)
+cfg["mcpServers"] = merged
 
 tmp = dest + ".tmp"
 with open(tmp, "w") as f:
@@ -74,6 +91,8 @@ if backup:
     print("backup:   %s" % backup)
 if before:
     print("was:      %s" % ", ".join(before))
-print("now:      %s" % ", ".join(servers))
+print("now:      %s" % ", ".join(merged))
+if kept:
+    print("kept:     %s (another yard's servers)" % ", ".join(kept))
 print("\nRestart Claude Code to pick these up.")
 PY
