@@ -22,7 +22,7 @@ networks:
 services:
 
   console:
-    image: ${EMACS_IMAGE_NAMESPACE:-gornskew}/${EMACS_IMAGE_BASE:-readymax}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}
+    image: ${EMACS_IMAGE_NAMESPACE:-genworks}/${EMACS_IMAGE_BASE:-readymacs}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}
     container_name: ${BASILISK_PREFIX:-}${BASILISK_CREW_CONSOLE:-console}
     hostname: console
     labels:

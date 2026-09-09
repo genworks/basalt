@@ -115,7 +115,7 @@ manifest can show in advance.
 
 | role | usual image | duty |
 |---|---|---|
-| **console** | *readymax* | the interactive control surface; receives and routes connecting agents personally; the longest-lived process in the stack |
+| **console** | *readymacs* | the interactive control surface; receives and routes connecting agents personally; the longest-lived process in the stack |
 | **front-line interactive** | *gendl*, `ccl` variant | assists the console, its users, and its guests |
 | **engineering** | *gendl*, `sbcl` variant | computation and geometry, for the stack and its users |
 | **monitor** | *autoheal* | continuously polls for hung services, and restarts them |
@@ -134,7 +134,7 @@ flowchart TB
     subgraph host["the host"]
       subgraph deployment["the deployment — its generated name on the network"]
         direction TB
-        CON["console<br/><i>readymax</i>"]
+        CON["console<br/><i>readymacs</i>"]
         FLI["front-line interactive<br/><i>gendl</i> · ccl variant"]
         ENG["engineering<br/><i>gendl</i> · sbcl variant"]
         MON["monitor<br/><i>autoheal</i><br/>(polls all services)"]
@@ -197,7 +197,7 @@ service's own port.
 
 ## The console toolkit
 
-The console's image name (readymax) undersells its capabilities
+The console's image name (readymacs) undersells its capabilities
 considerably. The editor everyone associates with the image is merely
 its best-known tool:
 

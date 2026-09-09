@@ -123,13 +123,13 @@
    :hostname "console"
    :description "The interactive control console, and the longest-lived process in the stack."
    :type "emacs-lisp"
-   ;; Display sku: the console runs the Readymacs configuration; the
-   ;; underlying image ships under the upstream sku until Readymacs
-   ;; images are published.
+   ;; The console runs the Readymacs image, published to
+   ;; genworks/readymacs on Docker Hub since 2026-09-09 (it still
+   ;; declares the upstream "readymax" capability token).
    :sku-label "readymacs"
    :mcp t
-   :registry-namespace "gornskew"
-   :image "${EMACS_IMAGE_BASE:-readymax}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}"
+   :registry-namespace "${EMACS_IMAGE_NAMESPACE:-genworks}"
+   :image "${EMACS_IMAGE_BASE:-readymacs}:${EMACS_IMAGE_BRANCH:-devo}-${EMACS_IMAGE_VARIANT:-full}"
    :ports ((:name "http" :container 7080)
            (:name "webterm" :container 6942 :host ${TTYD_HOST_PORT:-6942}))
    :environment (("WEBTERM" . "${WEBTERM:-ttyd}")

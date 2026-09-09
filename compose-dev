@@ -1063,7 +1063,7 @@ _crew_display() {
 # consonant-heavy, gendl liquid, gdl English-gentry, autoheal vocalic.
 _crew_onsets_for() {
     case "$1" in
-        readymax:*|skewed-emacs:*) echo 'Bl Gr Thr Kro Zar Vex Mog Drel' ;;
+        readymacs:*|readymax:*|skewed-emacs:*) echo 'Bl Gr Thr Kro Zar Vex Mog Drel' ;;
         cyclops:*)      echo 'Mul Cal Bran Flan Kear Dun Scan Gall' ;;
         gendl:*sbcl*)   echo 'Vas Ael Ion Cyr Tha Mor Zel Ryn' ;;
         gendl:*)        echo 'Ka Lis Par Quo Sem Tel Nym Ori' ;;
@@ -1082,7 +1082,7 @@ _crew_onsets_for() {
 }
 _crew_finals_for() {
     case "$1" in
-        readymax:*|skewed-emacs:*) echo 'org arn und ath esh ork ilk uz' ;;
+        readymacs:*|readymax:*|skewed-emacs:*) echo 'org arn und ath esh ork ilk uz' ;;
         cyclops:*)      echo 'doon lahan nigan herty ney ley lon agher' ;;
         gendl:*sbcl*)   echo 'ien uur eos aal ymn ore ith yss' ;;
         gendl:*)        echo 'da per lon ta mir vex is und' ;;
