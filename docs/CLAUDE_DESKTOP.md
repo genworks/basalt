@@ -32,25 +32,24 @@ because none of them knows what else is deployed.
    `mcp/claude_desktop_config.json` — on Linux and macOS it invokes
    `mcp/mcp-exec` directly; on Windows it goes through `wsl`.
 
-2. **Copy the generated config to Claude Desktop's config location:**
+2. **Splice the generated config into Claude Desktop's config file:**
 
-   **Linux:**
    ```bash
-   cp mcp/claude_desktop_config.json ~/.config/Claude/claude_desktop_config.json
+   mcp/install-claude-desktop-config
    ```
 
-   **macOS:**
-   ```bash
-   cp mcp/claude_desktop_config.json ~/Library/Application\ Support/Claude/claude_desktop_config.json
-   ```
+   It finds the file by platform — Linux `~/.config/Claude/`, macOS
+   `~/Library/Application Support/Claude/`, Windows `%APPDATA%\Claude\`
+   (reached from WSL as `~/Claude` if you keep such a link, else
+   `/mnt/c/Users/YOUR_USERNAME/AppData/Roaming/Claude/`) — or takes the
+   path as its one argument. It replaces only this deployment's
+   servers: other MCP servers you have registered there, and the
+   servers of another deployment on the same host, stay. A backup is
+   kept beside the file.
 
-   **Windows (from inside WSL):**
-   ```bash
-   cp mcp/claude_desktop_config.json /mnt/c/Users/YOUR_USERNAME/AppData/Roaming/Claude/claude_desktop_config.json
-   ```
-
-   Replace `YOUR_USERNAME` with your Windows username. Alternatively,
-   from Windows Explorer:
+   To do it by hand instead, copy `mcp/claude_desktop_config.json` over
+   the file at that location. A copy replaces the whole file, so it
+   erases any other servers registered there. From Windows Explorer:
    - Source: `\\wsl$\Ubuntu\home\YOUR_WSL_USER\projects\basalt\mcp\claude_desktop_config.json`
    - Destination: `%APPDATA%\Claude\claude_desktop_config.json`
 
@@ -106,9 +105,10 @@ as your first message.
 
 Claude Desktop is just one consumer. The same generated configs work for:
 
-- **Claude Code**: from the Basalt clone, `claude mcp add` each server
-  from `mcp/claude_desktop_config.json`, or copy its `mcpServers` block
-  into a `.mcp.json` in your project
+- **Claude Code** on the host: `mcp/install-claude-code-config` splices
+  `mcp/claude-code-mcp.json` into `~/.claude.json` (restart Claude Code
+  afterwards); or copy that file's `mcpServers` block into a `.mcp.json`
+  in your project
 - **Codex CLI**: `./basalt up` maintains `~/.codex/config.toml` inside
   the container automatically; for a host-side Codex, adapt `mcp/mcp.toml`
 - **Grok Build CLI**: the same merged TOML is written into
@@ -119,17 +119,23 @@ Claude Desktop is just one consumer. The same generated configs work for:
 
 ## Merging with Existing MCP Configuration
 
-If you already have other MCP servers configured in Claude Desktop, merge
-the `mcpServers` entries from the generated `claude_desktop_config.json`
-into your existing configuration file by hand.
+`mcp/install-claude-desktop-config` merges rather than replaces: it
+touches only the `mcpServers` key, and within it only the entries
+launched through this clone's `mcp/mcp-exec`. Your other MCP servers
+stay, and so do the servers of a second deployment on the same host, as
+long as that deployment's `mcp/mcp-exec` still exists on disk — an entry
+whose launcher is gone is dropped as stale. Two deployments on one host
+therefore each run their own installer once, in either order.
 
 ## Cloning to a Different Location
 
 The generated `claude_desktop_config.json` contains the absolute path to
 your **Basalt** clone, determined at `./basalt up` time from where you
 run the command, so a non-default clone location works automatically. If
-you move the clone, regenerate and re-copy: a config pointing at a
-`mcp-exec` that is no longer there fails quietly, with nothing obviously
+you move the clone, regenerate (`./basalt up`) and run
+`mcp/install-claude-desktop-config` again: it drops the entries whose
+launcher is no longer there and adds the new ones. A config still
+pointing at a vanished `mcp-exec` fails quietly, with nothing obviously
 wrong in Claude Desktop's UI.
 
 ## Troubleshooting
@@ -138,7 +144,7 @@ wrong in Claude Desktop's UI.
 - Ensure the stack is running (`docker ps` should show the containers)
 - Check that the paths in `claude_desktop_config.json` match your Basalt
   clone location
-- Restart Claude Desktop after copying the config
+- Restart Claude Desktop after installing the config
 
 **`mcp/claude_desktop_config.json` missing or stale:**
 - It is generated; run `./basalt up` and wait for the

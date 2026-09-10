@@ -1,0 +1,144 @@
+#!/bin/sh
+# Copyright © 2026 Gornskew Enterprises
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.  Distributed WITHOUT
+# ANY WARRANTY; see <https://www.gnu.org/licenses/agpl-3.0.html>.
+
+# Splice the yard's generated MCP servers into Claude Desktop's config.
+#
+# The sibling mcp/install-claude-code-config does this for Claude
+# Code's ~/.claude.json.  Claude Desktop's claude_desktop_config.json
+# used to be a whole file you copied into place, and a copy has one
+# failure: two stacks on one host, and the second copy erases the
+# first stack's servers.  So this splices instead, the same way the
+# sibling does: it replaces only this yard's own servers -- an entry
+# launched through another yard's live mcp/mcp-exec stays, one whose
+# launcher no longer exists on disk is dropped, and anything that is
+# not an mcp-exec launcher at all (your own other MCP servers) is left
+# alone.  Every other top-level key in the file is preserved.
+#
+# Source is mcp/claude_desktop_config.json, written by `basalt up`
+# in the platform's form (through wsl.exe on Windows, direct elsewhere).
+#
+# Usage:  mcp/install-claude-desktop-config [path-to-claude_desktop_config.json]
+#
+# Without an argument the destination is found by platform:
+#   Windows (WSL)  $HOME/Claude/claude_desktop_config.json when $HOME/Claude
+#                  is a directory (a link to %APPDATA%\Claude); otherwise
+#                  the one /mnt/c/Users/*/AppData/Roaming/Claude/ if exactly
+#                  one exists
+#   macOS          ~/Library/Application Support/Claude/claude_desktop_config.json
+#   Linux          ${XDG_CONFIG_HOME:-~/.config}/Claude/claude_desktop_config.json
+# Restart Claude Desktop afterwards; the file is read at startup.
+
+set -e
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SRC="${SCRIPT_DIR}/claude_desktop_config.json"
+
+[ -f "$SRC" ] || {
+    printf 'no %s -- bring a deployment up first (./basalt up)\n' "$SRC" >&2
+    exit 1
+}
+command -v python3 >/dev/null 2>&1 || {
+    printf 'python3 is required to merge JSON safely\n' >&2
+    exit 1
+}
+
+find_dest() {
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        if [ -d "${HOME}/Claude" ]; then
+            printf '%s\n' "${HOME}/Claude/claude_desktop_config.json"
+            return 0
+        fi
+        set -- /mnt/c/Users/*/AppData/Roaming/Claude
+        if [ $# -eq 1 ] && [ -d "$1" ]; then
+            printf '%s\n' "$1/claude_desktop_config.json"
+            return 0
+        fi
+        printf 'cannot pick the Windows Claude Desktop directory under /mnt/c/Users (none, or several); pass the path\n' >&2
+        return 1
+    fi
+    case "$(uname -s 2>/dev/null)" in
+        Darwin) printf '%s\n' "${HOME}/Library/Application Support/Claude/claude_desktop_config.json" ;;
+        *)      printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}/Claude/claude_desktop_config.json" ;;
+    esac
+}
+
+DEST="${1:-$(find_dest)}"
+[ -d "$(dirname -- "$DEST")" ] || {
+    printf 'no directory %s -- is Claude Desktop installed?  Pass the config path explicitly\n' "$(dirname -- "$DEST")" >&2
+    exit 1
+}
+
+python3 - "$SRC" "$DEST" <<'PY'
+import json, sys, collections, shutil, os
+
+src, dest = sys.argv[1], sys.argv[2]
+
+def launcher(entry):
+    """The mcp-exec path an entry launches through, or None."""
+    if not isinstance(entry, dict):
+        return None
+    cmd = entry.get("command")
+    args = entry.get("args") or []
+    if isinstance(cmd, str) and cmd.endswith("/mcp/mcp-exec"):
+        return cmd
+    if (isinstance(cmd, str)
+            and os.path.basename(cmd).lower() in ("wsl", "wsl.exe")
+            and args and isinstance(args[0], str)
+            and args[0].endswith("/mcp/mcp-exec")):
+        return args[0]
+    return None
+
+with open(src) as f:
+    srccfg = json.load(f, object_pairs_hook=collections.OrderedDict)
+servers = srccfg.get("mcpServers", {})
+if not servers:
+    sys.exit("source has no mcpServers; refusing to install an empty registry")
+
+if os.path.exists(dest):
+    with open(dest) as f:
+        cfg = json.load(f, object_pairs_hook=collections.OrderedDict)
+    backup = dest + ".bak-basilisk"
+    shutil.copy2(dest, backup)
+else:
+    cfg, backup = collections.OrderedDict(), None
+    if "globalShortcut" in srccfg:
+        cfg["globalShortcut"] = srccfg["globalShortcut"]
+
+old = cfg.get("mcpServers") or {}
+before = sorted(old.keys())
+mine = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(src)), "mcp-exec"))
+merged, kept = collections.OrderedDict(), []
+for name, entry in old.items():
+    path = launcher(entry)
+    ours = path is not None and os.path.exists(path) and os.path.realpath(path) == mine
+    stale = path is not None and not os.path.exists(path)
+    if name in servers or ours or stale:
+        continue
+    merged[name] = entry
+    kept.append(name)
+merged.update(servers)
+cfg["mcpServers"] = merged
+
+tmp = dest + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+with open(tmp) as f:        # parse it back before it becomes the real file
+    json.load(f)
+os.replace(tmp, dest)
+
+print("config:   %s" % dest)
+if backup:
+    print("backup:   %s" % backup)
+if before:
+    print("was:      %s" % ", ".join(before))
+print("now:      %s" % ", ".join(merged))
+if kept:
+    print("kept:     %s (other servers, or another yard's)" % ", ".join(kept))
+print("\nRestart Claude Desktop to pick these up.")
+PY

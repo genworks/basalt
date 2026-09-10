@@ -30,10 +30,21 @@ COMPOSE_DIR="${SCRIPT_DIR}/.."
 # override outranks the ledger; the class slug is the last fallback.
 _ledger_room="$(sed -n 's/^BASILISK_POST_CAPTAIN_ROOM=//p' "${COMPOSE_DIR}/generated/crew.env" 2>/dev/null | head -1)"
 SERVICE_NAME="${BASILISK_CAPTAIN:-${_ledger_room:-ready-room}}"
-LOG_FILE="/tmp/mcp-exec.log"
-LOCK_DIR="/tmp/mcp-exec.lock"
+# One lock, one starter mark and one log PER YARD (2026-09-10).  Two
+# stacks on one host (this yard and a fork of it) each raise their
+# own compose project, but every launcher used to share
+# /tmp/mcp-exec.lock: with both stacks down and a client launching
+# all servers at once, the second yard's launchers waited out the
+# first yard's raise on its lock, gave up on the lock, then waited
+# 90 s for a service nobody was raising, and failed.  The key is the
+# yard's resolved path, so two clones never share a lock and a moved
+# clone gets a fresh one.
+_yard_key="$(cd "$COMPOSE_DIR" && pwd -P | cksum | cut -d' ' -f1)"
+_yard_key="$(basename "$(cd "$COMPOSE_DIR" && pwd -P)")-${_yard_key}"
+LOG_FILE="/tmp/mcp-exec-${_yard_key}.log"
+LOCK_DIR="/tmp/mcp-exec-${_yard_key}.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
-STARTER_FILE="/tmp/mcp-compose-starter"
+STARTER_FILE="/tmp/mcp-compose-starter-${_yard_key}"
 MAX_WAIT_SECONDS=90
 
 # Track if this instance started compose and holds the lock

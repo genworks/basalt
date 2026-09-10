@@ -56,8 +56,11 @@ A first `up` also makes a few deliberate changes on the host:
   `~/.gemini/`, `~/.codex/` and `~/.grok/` where missing, so the
   console's file mounts resolve cleanly.
 - If a `~/.claude.json` already routes MCP through some
-  `mcp/mcp-exec`, it is conservatively re-pointed at this clone's
-  copy (a backup is kept; nothing else in the file is touched).
+  `mcp/mcp-exec` that no longer exists on disk (a moved or deleted
+  clone), that entry is re-pointed at this clone's copy; entries
+  routing through another live clone are left alone, so two
+  deployments can share the file (a backup is kept; nothing else in
+  the file is touched).
 
 
 ## Commands
@@ -117,6 +120,15 @@ against a service name needs to know which instance it runs in. To
 reach a second instance's console from the host, name it with a
 leading @-argument: `rmacs @alpha`.
 
+Two deployments from different clones (a Basalt beside an upstream
+Basilisk, say) need no instance name — each clone is its own compose
+project — only distinct published ports. The offset is read from the
+environment at every `up` and written into `.env` afresh, so pin it
+in `systemd/host.env` (`BASILISK_PORT_OFFSET=100`) to make it stick.
+Each clone's `mcp/install-claude-code-config` and
+`mcp/install-claude-desktop-config` add only that deployment's
+servers to the client registries and leave the other's in place.
+
 
 ## Connecting
 
@@ -140,7 +152,7 @@ the platform as it goes:
 
 | file | for |
 |---|---|
-| `mcp/claude_desktop_config.json` | Claude Desktop on this or another machine — walkthrough in [docs/CLAUDE_DESKTOP.md](docs/CLAUDE_DESKTOP.md) |
+| `mcp/claude_desktop_config.json` | Claude Desktop on this or another machine — `mcp/install-claude-desktop-config` splices it into Claude Desktop's config; walkthrough in [docs/CLAUDE_DESKTOP.md](docs/CLAUDE_DESKTOP.md) |
 | `mcp/claude-code-mcp.json` | Claude Code on the host — `mcp/install-claude-code-config` splices it into `~/.claude.json` |
 | `mcp/mcp.toml`, `mcp/mcp-container.json`, `mcp/mcp-windows.json` | other clients, and the agents inside the console |
 
