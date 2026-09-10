@@ -2,14 +2,14 @@
 # box has finished pulling images and starting containers, so the first run
 # does not mistake a slow start for a fault.
 [Unit]
-Description=Run the Basilisk watchdog periodically
-Documentation=https://gitlab.genworks.com/gornskew/basilisk
+Description=Run the Basalt watchdog periodically
+Documentation=https://gitlab.genworks.com/genworks/basalt
 
 [Timer]
 OnBootSec=3min
 OnUnitActiveSec=5min
 AccuracySec=30s
-Unit=basilisk-watchdog.service
+Unit=basalt-watchdog.service
 
 [Install]
 WantedBy=timers.target

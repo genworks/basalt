@@ -1,18 +1,22 @@
-# The ONE Basilisk unit.  There is deliberately no per-host copy of this
+# The ONE Basalt unit.  There is deliberately no per-host copy of this
 # file anywhere: until 2026-08-15 every *-stack repo carried its own
 # near-identical unit, and the entire difference between all five was one
 # line (the image variant) plus a description string.  Five sources of
 # truth for one value is how they drift.
 #
 # Host specifics are injected as DATA instead: each stack's ./install
-# writes systemd/host.env into the controlling Basilisk clone, and this
+# writes systemd/host.env into the controlling Basalt clone, and this
 # unit reads it.  The leading '-' means a clone with no host.env still
 # starts fine, on image defaults.
+#
+# The units carry THIS yard's name (basalt.*, since 2026-09-10) so a
+# Basalt can be installed beside an upstream Basilisk on one host
+# without either installer overwriting the other's units.
 [Unit]
-Description=Basilisk container stack (Emacs, Lisp engines, Cyclops, autoheal)
-Documentation=https://gitlab.genworks.com/gornskew/basilisk
+Description=Basalt container stack (console, Lisp engine services, monitor)
+Documentation=https://gitlab.genworks.com/genworks/basalt
 # No network-online.target here, on purpose: boot needs no egress by
-# design (images are sealed; ./basilisk up pulls only images MISSING
+# design (images are sealed; ./basalt up pulls only images MISSING
 # locally), so an airgapped box must not stall behind a wait-online
 # timeout.  Cold-box installs still get their pulls: stock docker.service
 # itself Wants/After network-online.target, and we order after docker --
@@ -22,7 +26,7 @@ After=docker.service
 Requires=docker.service network.target
 # Companion, not a dependency: the stack comes up whether or not the
 # watchdog timer is installed.
-Wants=basilisk-watchdog.timer
+Wants=basalt-watchdog.timer
 
 [Service]
 Type=oneshot
@@ -32,14 +36,15 @@ Group=docker
 WorkingDirectory=%%BASILISK_DIR%%
 Environment=HOME=/home/%%USER%%
 
-# Per-host injection: EMACS_IMAGE_VARIANT and anything else a stack's
-# ./install decides this box needs.  Written by <host>-stack/install.
+# Per-host injection: EMACS_IMAGE_VARIANT, BASILISK_PORT_OFFSET and
+# anything else this box needs.  Written by a stack's ./install, or by
+# hand.
 EnvironmentFile=-%%BASILISK_DIR%%/systemd/host.env
 
-ExecStartPre=%%BASILISK_DIR%%/basilisk init
-ExecStart=%%BASILISK_DIR%%/basilisk up -d
-ExecStop=%%BASILISK_DIR%%/basilisk down
-ExecReload=%%BASILISK_DIR%%/basilisk restart
+ExecStartPre=%%BASILISK_DIR%%/basalt init
+ExecStart=%%BASILISK_DIR%%/basalt up -d
+ExecStop=%%BASILISK_DIR%%/basalt down
+ExecReload=%%BASILISK_DIR%%/basalt restart
 
 # Image pulls on a cold box are the long pole, not container start.
 TimeoutStartSec=480

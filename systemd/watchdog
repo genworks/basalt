@@ -7,9 +7,9 @@
 # License, or (at your option) any later version.  Distributed WITHOUT
 # ANY WARRANTY; see <https://www.gnu.org/licenses/agpl-3.0.html>.
 
-# basilisk watchdog -- recover a wedged ship, or a wedged fleet.
+# basalt watchdog -- recover a wedged console, or a wedged stack.
 #
-# Invoked by basilisk-watchdog.timer.  Run by hand any time to see what it
+# Invoked by basalt-watchdog.timer.  Run by hand any time to see what it
 # thinks:  ./systemd/watchdog --dry-run
 #
 # WHAT THIS IS FOR, and what it deliberately is NOT
@@ -44,7 +44,9 @@ set -eu
 
 BASILISK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 STATE_DIR="${BASILISK_WATCHDOG_STATE_DIR:-/var/tmp}"
-STATE="${STATE_DIR}/basilisk-watchdog.state"
+# Per yard: a Basalt beside a Basilisk on one host must not read the
+# other watchdog's fault memory.
+STATE="${STATE_DIR}/basalt-watchdog.state"
 BACKOFF_SECS="${BASILISK_WATCHDOG_BACKOFF:-1800}"
 # The compose SERVICE name of the Captain.  This said "skewed-emacs" until
 # 2026-08-16, which was the pre-Basilisk service name; the 2026-08-15 rename
@@ -66,7 +68,7 @@ CAPTAIN_PROBE="${BASILISK_WATCHDOG_PROBE:-http://localhost:7080/lisply/ping-lisp
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
-log() { printf '%s basilisk-watchdog: %s\n' "$(date -Is)" "$*"; }
+log() { printf '%s basalt-watchdog: %s\n' "$(date -Is)" "$*"; }
 
 cd "$BASILISK_DIR"
 
@@ -159,15 +161,15 @@ if [ "$fault" = "ship" ]; then
     # STANDING ship.  A bare `up` would be a new raising -- fresh ship,
     # fresh name, whole complement relieved (per-raising minting,
     # 2026-08-24) -- which is no way to relight one dark room.
-    log "recovering ship: ${detail} -- ./basilisk up -d${missing}"
+    log "recovering ship: ${detail} -- ./basalt up -d${missing}"
     # shellcheck disable=SC2086  (word-split intentional: service names)
-    ./basilisk up -d $missing || log "up failed"
+    ./basalt up -d $missing || log "up failed"
 else
     # The wedged ship dies with his wedge: down buries him, and the
     # up raises a new ship under a new name.
-    log "recovering fleet: ${detail} -- ./basilisk down then up -d"
-    ./basilisk down || log "down failed"
-    ./basilisk up -d || log "up failed"
+    log "recovering fleet: ${detail} -- ./basalt down then up -d"
+    ./basalt down || log "down failed"
+    ./basalt up -d || log "up failed"
 fi
 
 printf 'LAST_FAULT=%s\nLAST_RESET=%s\n' "$fault" "$now" > "$STATE"

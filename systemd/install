@@ -7,23 +7,27 @@
 # License, or (at your option) any later version.  Distributed WITHOUT
 # ANY WARRANTY; see <https://www.gnu.org/licenses/agpl-3.0.html>.
 
-# Install Basilisk as systemd units on this machine.
+# Install Basalt as systemd units on this machine.
 #
-#   cd /path/to/basilisk && sh systemd/install
+#   cd /path/to/basalt && sh systemd/install
 #
 # Installs FOUR units, all generated from the templates beside this
 # script by substituting the invoking user and this clone's path:
 #
-#   basilisk.service           the stack; restarts on failure
-#   basilisk.timer             starts the stack 20s AFTER boot completes
-#   basilisk-watchdog.service  recovery for a wedged ship or fleet
-#   basilisk-watchdog.timer    runs the watchdog every 5 minutes
+#   basalt.service           the stack; restarts on failure
+#   basalt.timer             starts the stack 20s AFTER boot completes
+#   basalt-watchdog.service  recovery for a wedged console or stack
+#   basalt-watchdog.timer    runs the watchdog every 5 minutes
 #
-# The stack is started by basilisk.timer, NOT by WantedBy=multi-user.target.
+# The units carry this yard's name (basalt.*, 2026-09-10), so a Basalt
+# can be installed beside an upstream Basilisk on the same host: the
+# two installers never touch each other's units.
+#
+# The stack is started by basalt.timer, NOT by WantedBy=multi-user.target.
 # A Type=oneshot unit in the boot target makes systemd wait for the whole
 # container stack before declaring boot done -- 10.128s of a 12.078s boot on
-# narad, past WSL's 10000ms WaitForBootProcess limit, so every boot logged
-# "/sbin/init failed to start within 10000ms".  See basilisk.timer.
+# one WSL host, past WSL's 10000ms WaitForBootProcess limit, so every boot
+# logged "/sbin/init failed to start within 10000ms".  See basalt.timer.
 #
 # ONE UNIT, NOT ONE PER HOST.  Until 2026-08-15 every *-stack repo shipped
 # its own near-identical copy of the service file, and the whole difference
@@ -45,17 +49,17 @@ BASILISK_USER="${BASILISK_USER:-$(logname 2>/dev/null || echo "${USER:-$(id -un)
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 LEGACY="skewed-emacs.service"
 
-echo "=== Basilisk systemd install ==="
+echo "=== Basalt systemd install ==="
 echo "  User         : ${BASILISK_USER}"
-echo "  Basilisk dir : ${BASILISK_DIR}"
+echo "  Basalt dir   : ${BASILISK_DIR}"
 echo "  Unit dir     : ${SYSTEMD_DIR}"
 echo ""
 
 # ---- preflight --------------------------------------------------------------
 
-[ -x "${BASILISK_DIR}/basilisk" ] || {
-    echo "ERROR: no executable ${BASILISK_DIR}/basilisk"
-    echo "       Basilisk runs from a clone of its own repo; see README.md."
+[ -x "${BASILISK_DIR}/basalt" ] || {
+    echo "ERROR: no executable ${BASILISK_DIR}/basalt"
+    echo "       Basalt runs from a clone of its own repo; see README.md."
     exit 1
 }
 id "${BASILISK_USER}" >/dev/null 2>&1 || { echo "ERROR: no such user ${BASILISK_USER}"; exit 1; }
@@ -67,7 +71,7 @@ groups "${BASILISK_USER}" 2>/dev/null | grep -qw docker || {
 
 # ---- install units ----------------------------------------------------------
 
-for unit in basilisk.service basilisk.timer basilisk-watchdog.service basilisk-watchdog.timer; do
+for unit in basalt.service basalt.timer basalt-watchdog.service basalt-watchdog.timer; do
     [ -f "${SCRIPT_DIR}/${unit}" ] || { echo "ERROR: missing template ${unit}"; exit 1; }
     sed -e "s|%%USER%%|${BASILISK_USER}|g" \
         -e "s|%%BASILISK_DIR%%|${BASILISK_DIR}|g" \
@@ -105,18 +109,18 @@ sudo systemctl daemon-reload
 # Migration for boxes installed before 2026-08-16, when the stack was pulled
 # in by multi-user.target directly.  Disabling only moves the .wants symlink;
 # it does not stop a running stack, and it is a no-op on a fresh box.
-if systemctl is-enabled basilisk.service >/dev/null 2>&1; then
-    echo "Taking basilisk.service off the boot critical path (now timer-started)."
-    sudo systemctl disable basilisk.service >/dev/null 2>&1 || true
+if systemctl is-enabled basalt.service >/dev/null 2>&1; then
+    echo "Taking basalt.service off the boot critical path (now timer-started)."
+    sudo systemctl disable basalt.service >/dev/null 2>&1 || true
 fi
 
-sudo systemctl enable basilisk.timer >/dev/null
-sudo systemctl enable basilisk-watchdog.timer >/dev/null
+sudo systemctl enable basalt.timer >/dev/null
+sudo systemctl enable basalt-watchdog.timer >/dev/null
 echo ""
-echo "Enabled basilisk.timer (starts the stack 20s after boot) and"
-echo "basilisk-watchdog.timer.  basilisk.service is installed but not"
+echo "Enabled basalt.timer (starts the stack 20s after boot) and"
+echo "basalt-watchdog.timer.  basalt.service is installed but not"
 echo "boot-enabled -- the timer starts it, so boot is not blocked on Docker."
 echo ""
-echo "Start now with:      sudo systemctl start basilisk"
-echo "Watch recovery with: journalctl -u basilisk-watchdog -f"
+echo "Start now with:      sudo systemctl start basalt"
+echo "Watch recovery with: journalctl -u basalt-watchdog -f"
 echo "Check the watchdog:  ${BASILISK_DIR}/systemd/watchdog --dry-run"

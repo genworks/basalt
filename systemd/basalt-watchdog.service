@@ -1,10 +1,10 @@
-# Companion to basilisk.service.  Covers the two failures autoheal cannot
-# see: containers missing entirely, and a Captain whose lisply endpoint has
+# Companion to basalt.service.  Covers the two failures autoheal cannot
+# see: containers missing entirely, and a console whose lisply endpoint has
 # stopped answering.  See ./watchdog for the restraint rules.
 [Unit]
-Description=Basilisk watchdog (recover a wedged ship or fleet)
-Documentation=https://gitlab.genworks.com/gornskew/basilisk
-After=docker.service basilisk.service
+Description=Basalt watchdog (recover a wedged console or stack)
+Documentation=https://gitlab.genworks.com/genworks/basalt
+After=docker.service basalt.service
 Requires=docker.service
 
 [Service]

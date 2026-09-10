@@ -1,10 +1,10 @@
-# Start the Basilisk stack shortly AFTER boot completes, not during it.
+# Start the Basalt stack shortly AFTER boot completes, not during it.
 #
 # WHY THIS EXISTS (2026-08-16)
 # ============================
-# basilisk.service is Type=oneshot, so while it was WantedBy=multi-user.target
+# basalt.service is Type=oneshot, so while it was WantedBy=multi-user.target
 # systemd could not reach the boot target until the entire container stack was
-# up.  On narad that measured 10.128s of a 12.078s userspace boot.  WSL's
+# up.  On one WSL host that measured 10.128s of a 12.078s userspace boot.  WSL's
 # WaitForBootProcess gives up at 10000ms, so every single boot logged:
 #
 #   WSL (2 - init-systemd(Ubuntu-24.04)) ERROR: WaitForBootProcess:3488:
@@ -20,19 +20,19 @@
 # rather than five.
 #
 # The service unit itself is untouched; what changed is only what pulls it in,
-# via `systemctl disable basilisk.service` in ./install, which moves symlinks
+# via `systemctl disable basalt.service` in ./install, which moves symlinks
 # rather than editing the file.
 
 [Unit]
-Description=Start the Basilisk container stack shortly after boot
-Documentation=https://gitlab.genworks.com/gornskew/basilisk
+Description=Start the Basalt container stack shortly after boot
+Documentation=https://gitlab.genworks.com/genworks/basalt
 
 [Timer]
 # Late enough that WSL has already declared boot successful, early enough that
 # the stack is up long before the watchdog's first run at OnBootSec=3min.
 OnBootSec=20s
 AccuracySec=5s
-Unit=basilisk.service
+Unit=basalt.service
 
 [Install]
 WantedBy=timers.target

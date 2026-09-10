@@ -92,8 +92,11 @@ it to systemd:
 
 ```bash
 cd systemd && sudo ./install
-sudo systemctl start basilisk     # likewise stop, restart
+sudo systemctl start basalt       # likewise stop, restart
 ```
+
+The units are named `basalt.*`, so they can be installed beside an
+upstream Basilisk's `basilisk.*` on the same host.
 
 ### Updating
 
