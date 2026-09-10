@@ -7,8 +7,10 @@ the architecture and the services — is described in
 starting the stack, stopping it, and connecting your people and your
 agents.
 
-Basalt is the Genworks-maintained fork of
-[Basilisk](https://github.com/gornskew/basilisk).
+Basalt and [Readymacs](https://gitlab.genworks.com/genworks/readymacs)
+are the recommended, supported development environments for the
+Gendl and GDL engines, and the way to put those engines in front of
+AI agents over MCP.
 
 A standard deployment runs an interactive **console** (Emacs, with
 MCP and HTTP endpoints), two **engine services** (Gendl on CCL and on
@@ -31,12 +33,13 @@ cd basalt
 
 Images are pulled as needed, services start and are health-validated
 one by one, and the deployment comes up under a generated name — a
-fresh one at every full `up`, kept in `.ship` and used as the name of
-the Docker network all services join, with the previous name retired
-into `.ships-log`. Containers likewise carry generated **instance
-names**, recorded in `.muster`; `up <service>` and `restart` act on
-the standing deployment without renaming anything. Read the current
-names from those files rather than remembering them.
+fresh one at every full `up`, recorded in the file `.ship` and used
+as the name of the Docker network all services join, with the
+previous name retired into the log file `.ships-log`. Containers
+likewise carry generated **instance names**, recorded in the file
+`.muster`; `up <service>` and `restart` act on the standing
+deployment without renaming anything. Read the current names from
+those files rather than remembering them.
 
 If you have a `~/projects/` directory it is bind-mounted at
 `/projects` in every container, and created if missing. To mount a
@@ -95,8 +98,8 @@ cd systemd && sudo ./install
 sudo systemctl start basalt       # likewise stop, restart
 ```
 
-The units are named `basalt.*`, so they can be installed beside an
-upstream Basilisk's `basilisk.*` on the same host.
+The units are named `basalt.*`, so they can be installed beside a
+sibling deployment stack's units on the same host.
 
 ### Updating
 
@@ -123,9 +126,9 @@ against a service name needs to know which instance it runs in. To
 reach a second instance's console from the host, name it with a
 leading @-argument: `rmacs @alpha`.
 
-Two deployments from different clones (a Basalt beside an upstream
-Basilisk, say) need no instance name — each clone is its own compose
-project — only distinct published ports. The offset is read from the
+Two deployments from different clones (a Basalt beside a sibling
+stack built with the same tooling, say) need no instance name — each
+clone is its own compose project — only distinct published ports. The offset is read from the
 environment at every `up` and written into `.env` afresh, so pin it
 in `systemd/host.env` (`BASILISK_PORT_OFFSET=100`) to make it stick.
 Each clone's `mcp/install-claude-code-config` and
@@ -284,7 +287,8 @@ copyright © 2026 Genworks International.
 Basalt is free software, released under the **GNU Affero General
 Public License, version 3 or later** — the full text is in
 [LICENSE](LICENSE). The images a deployment pulls carry their own
-terms, stated at their own registries.
+terms, stated at their own registries. Provenance and the upstream
+relationship are recorded in [UPSTREAM.md](UPSTREAM.md).
 
 ## Origin of record
 
