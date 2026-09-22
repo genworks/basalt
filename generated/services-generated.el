@@ -21,26 +21,26 @@
      :http-host "console"
      :http-port 7080
     )
-    (:name "front-line"
+    (:name "engine-ccl"
      :type "common-lisp"
      :lisp-impl "CCL"
      :sku "gendl-ccl"
      :mcp t
-     :http-host "front-line"
+     :http-host "engine-ccl"
      :http-port 9080
      :http-host-port ${GENDL_CCL_HOST_PORT:-19080}
-     :swank-host "front-line"
+     :swank-host "engine-ccl"
      :swank-port 4200
     )
-    (:name "engineering"
+    (:name "engine-sbcl"
      :type "common-lisp"
      :lisp-impl "SBCL"
      :sku "gendl-sbcl"
      :mcp t
-     :http-host "engineering"
+     :http-host "engine-sbcl"
      :http-port 9090
      :http-host-port ${GENDL_SBCL_HOST_PORT:-29080}
-     :swank-host "engineering"
+     :swank-host "engine-sbcl"
      :swank-port 4210
     )
     (:name "monitor"

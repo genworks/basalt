@@ -5,7 +5,7 @@ drive the Emacs and Common Lisp images as MCP tools.
 
 This lives in the Basalt repo rather than in `readymacs` because the
 config being generated registers **every** server on the roster — the
-deployment's services: `console`, `front-line`, `engineering`, and
+deployment's services: `console`, `engine-ccl`, `engine-sbcl`, and
 whatever services the stack repositories add (an ingress, licensed
 engine variants, ...). No single service's repo can write that file,
 because none of them knows what else is deployed.
@@ -56,8 +56,8 @@ because none of them knows what else is deployed.
 3. **Restart Claude Desktop** — you should see the roster's MCP servers
    connect, named for the deployment's services:
    - `console` — Emacs Lisp evaluation (the interactive control surface)
-   - `front-line` — Common Lisp (CCL) with Gendl
-   - `engineering` — Common Lisp (SBCL) with Gendl
+   - `engine-ccl` — Common Lisp (CCL) with Gendl
+   - `engine-sbcl` — Common Lisp (SBCL) with Gendl
 
    (Plus any additional services from stack repositories you have
    installed.)

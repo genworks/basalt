@@ -87,10 +87,12 @@
   ;; verbatim string matched here; images through the rename
   ;; transition also carry the elder "skewed-emacs" token.)
   (:role :console :requires ("readymax"))
-  (:role :front-line
-   :description "Front-line interactive service: assists the console and its users."
+  (:role :engine-ccl
+   :description "The CCL engine: Gendl on Clozure CL; the interactive engine that assists the console and its users."
    :requires ("gendl"))
-  (:role :engineering :requires ("gendl"))
+  (:role :engine-sbcl
+   :description "The SBCL engine: Gendl on SBCL; the second implementation, to check against."
+   :requires ("gendl"))
   (:role :ingress :requires ("reverse-proxy"))
   ;; The dashboard role comes with no service in the base set -- its
   ;; requirements are stated, and a service to fill it arrives by
@@ -104,7 +106,7 @@
   ;; SERVICE KEYS ARE HOSTNAMES; CONTAINERS TAKE INSTANCE NAMES.  Each
   ;; entry names its :hostname -- the plain service word that becomes
   ;; the compose service key, the in-network hostname, and the MCP
-  ;; server name (console, front-line, engineering, monitor).  The
+  ;; server name (console, engine-ccl, engine-sbcl, monitor).  The
   ;; CONTAINER NAME is a generated instance name, assigned at startup
   ;; and persisted in .muster -- so a recreate under a fresh name is
   ;; exactly that: a fresh instance, same service.  The image is
@@ -176,14 +178,16 @@
                     :alert-mb 2000))
    :healthcheck (:endpoint "/lisply/ping-lisp" :interval "30s"))
 
-  ;; The front-line interactive service: assists the console and its
-  ;; users.  The usual fit is the gendl ccl variant (the engineering
-  ;; service below being gendl sbcl); the :image pin is what
-  ;; GUARANTEES it -- the role states the duty, the image states the
-  ;; software.
-  (:role :front-line
-   :hostname "front-line"
-   :description "Front-line interactive service: assists the console and its users."
+  ;; The CCL engine: the interactive engine that assists the console
+  ;; and its users.  The service name says the duty and the
+  ;; implementation (engine, on CCL); the image name says the
+  ;; software (gendl, ccl variant); the :image pin is what GUARANTEES
+  ;; the match -- the role states the duty, the image states the
+  ;; software.  The engine-sbcl service below is the same engine on
+  ;; SBCL.
+  (:role :engine-ccl
+   :hostname "engine-ccl"
+   :description "The CCL engine: Gendl on Clozure CL; the interactive engine that assists the console and its users."
    :type "common-lisp"
    :registry-namespace "${GENDL_IMAGE_NAMESPACE:-genworks}"
    :image "${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-ccl"
@@ -200,10 +204,10 @@
                     :alert-mb 1200))
    :healthcheck (:endpoint "/lisply/ping-lisp" :interval "72s"))
 
-  ;; The engineering service: the gendl sbcl variant.
-  (:role :engineering
-   :hostname "engineering"
-   :description "The engineering service: computation and geometry for the stack and its users."
+  ;; The SBCL engine: Gendl on SBCL.
+  (:role :engine-sbcl
+   :hostname "engine-sbcl"
+   :description "The SBCL engine: Gendl on SBCL; computation and geometry for the stack and its users, and the second implementation to check against."
    :type "common-lisp"
    :registry-namespace "${GENDL_IMAGE_NAMESPACE:-genworks}"
    :image "${GENDL_IMAGE_BASE:-gendl}:${GENDL_IMAGE_BRANCH:-devo}-sbcl"

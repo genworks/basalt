@@ -46,8 +46,8 @@
   :roles              :postings
   :role               :post
   :console            :captain
-  :front-line         :first-officer
-  :engineering        :ships-engineer
+  :engine-ccl         :first-officer
+  :engine-sbcl        :ships-engineer
   :ingress            :transporter-chief
   :dashboard          :communications-officer
   :monitor            :doctor)
@@ -65,8 +65,8 @@
  :vocabulary
  (:stowaway-designator "unassigned"
   :muster-titles (:captain       "Console"
-                  :first-officer "Front Line"
-                  :engineer      "Engineering"
+                  :first-officer "Engine (CCL)"
+                  :engineer      "Engine (SBCL)"
                   :pilot         "Ingress"
                   :comm          "Dashboard"
                   :doctor        "Monitor"

@@ -16,28 +16,28 @@
         "30000"
       ]
     },
-    "front-line": {
+    "engine-ccl": {
       "command": "wsl",
       "args": [
         "${SKEWED_CLONE_PATH}/mcp/mcp-exec",
         "--server-name",
-        "front-line",
+        "engine-ccl",
         "--backend-host",
-        "front-line",
+        "engine-ccl",
         "--http-port",
         "9080",
         "--request-timeout-ms",
         "30000"
       ]
     },
-    "engineering": {
+    "engine-sbcl": {
       "command": "wsl",
       "args": [
         "${SKEWED_CLONE_PATH}/mcp/mcp-exec",
         "--server-name",
-        "engineering",
+        "engine-sbcl",
         "--backend-host",
-        "engineering",
+        "engine-sbcl",
         "--http-port",
         "9090",
         "--request-timeout-ms",

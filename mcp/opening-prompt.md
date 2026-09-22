@@ -5,8 +5,8 @@ deployment over MCP. Paste this (or adapt it) into a fresh session
 with Claude Desktop, Claude Code, Codex, or any MCP-capable client.
 
 The MCP servers are named for the deployment's services: `console`
-(Emacs — the interactive control surface), `front-line` and
-`engineering` (Common Lisp with Gendl), plus whatever extra services
+(Emacs — the interactive control surface), `engine-ccl` and
+`engine-sbcl` (Common Lisp with Gendl), plus whatever extra services
 this deployment carries (`ingress`, licensed engine variants, ...).
 
 ## Step 1: Learn Basic Buffer Access (MCP Docs Essentials)
@@ -55,10 +55,10 @@ Re-read: `console:console__get_docs(id="claude-md")` - this time completely
 
 **If working with Gendl/Common Lisp backends, also read the docs for
 that backend** (the Dashboard lists the Lisply backends present — the
-front-line and engineering services in the standard set, plus any a
+engine-ccl and engine-sbcl services in the standard set, plus any a
 stack repository adds):
 ```
-front-line:front-line__get_docs(id="claude-md")
+engine-ccl:engine-ccl__get_docs(id="claude-md")
 ```
 
 ## Step 4: Present Options to the User

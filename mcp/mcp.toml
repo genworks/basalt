@@ -21,28 +21,28 @@ approval_mode = "approve"
 [mcp_servers.console.tools.console__lisp_eval]
 approval_mode = "approve"
 
-[mcp_servers.front-line]
+[mcp_servers.engine-ccl]
 command = "node"
-args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "front-line", "--backend-host", "front-line", "--http-port", "9080", "--request-timeout-ms", "30000"]
+args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "engine-ccl", "--backend-host", "engine-ccl", "--http-port", "9080", "--request-timeout-ms", "30000"]
 
-[mcp_servers.front-line.tools.front-line__ping_lisp]
+[mcp_servers.engine-ccl.tools.engine-ccl__ping_lisp]
 approval_mode = "approve"
 
-[mcp_servers.front-line.tools.front-line__http_request]
+[mcp_servers.engine-ccl.tools.engine-ccl__http_request]
 approval_mode = "approve"
 
-[mcp_servers.front-line.tools.front-line__lisp_eval]
+[mcp_servers.engine-ccl.tools.engine-ccl__lisp_eval]
 approval_mode = "approve"
 
-[mcp_servers.engineering]
+[mcp_servers.engine-sbcl]
 command = "node"
-args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "engineering", "--backend-host", "engineering", "--http-port", "9090", "--request-timeout-ms", "30000"]
+args = ["/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js", "--server-name", "engine-sbcl", "--backend-host", "engine-sbcl", "--http-port", "9090", "--request-timeout-ms", "30000"]
 
-[mcp_servers.engineering.tools.engineering__ping_lisp]
+[mcp_servers.engine-sbcl.tools.engine-sbcl__ping_lisp]
 approval_mode = "approve"
 
-[mcp_servers.engineering.tools.engineering__http_request]
+[mcp_servers.engine-sbcl.tools.engine-sbcl__http_request]
 approval_mode = "approve"
 
-[mcp_servers.engineering.tools.engineering__lisp_eval]
+[mcp_servers.engine-sbcl.tools.engine-sbcl__lisp_eval]
 approval_mode = "approve"

@@ -62,8 +62,8 @@ be stated about each: the **image**. Everything else can be left to
 the tooling's defaults.
 
 - A service answers to its **declared hostname** — a plain service
-  word stated in the configuration (`console`, `front-line`,
-  `engineering`, `monitor`), which becomes the compose service key,
+  word stated in the configuration (`console`, `engine-ccl`,
+  `engine-sbcl`, `monitor`), which becomes the compose service key,
   the in-network hostname, and the MCP server name. A service that
   declares none answers to a hostname derived from its role or
   roles.
@@ -116,8 +116,8 @@ manifest can show in advance.
 | role | usual image | duty |
 |---|---|---|
 | **console** | *readymacs* | the interactive control surface; receives and routes connecting agents personally; the longest-lived process in the stack |
-| **front-line interactive** | *gendl*, `ccl` variant | assists the console, its users, and its guests |
-| **engineering** | *gendl*, `sbcl` variant | computation and geometry, for the stack and its users |
+| **engine-ccl** | *gendl*, `ccl` variant | the interactive engine: assists the console, its users, and its guests |
+| **engine-sbcl** | *gendl*, `sbcl` variant | computation and geometry, for the stack and its users; the second implementation, to check against |
 | **monitor** | *autoheal* | continuously polls for hung services, and restarts them |
 
 Two further roles are declared in the configuration with **no
@@ -135,8 +135,8 @@ flowchart TB
       subgraph deployment["the deployment — its generated name on the network"]
         direction TB
         CON["console<br/><i>readymacs</i>"]
-        FLI["front-line interactive<br/><i>gendl</i> · ccl variant"]
-        ENG["engineering<br/><i>gendl</i> · sbcl variant"]
+        FLI["engine-ccl<br/><i>gendl</i> · ccl variant"]
+        ENG["engine-sbcl<br/><i>gendl</i> · sbcl variant"]
         MON["monitor<br/><i>autoheal</i><br/>(polls all services)"]
         ING["ingress<br/><i>(via stack repository)</i>"]
       end
