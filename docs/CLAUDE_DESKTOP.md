@@ -94,7 +94,7 @@ With these MCP servers, Claude Desktop can:
 ## Bootstrapping a Session
 
 Optional but recommended: create a Claude Desktop Project and paste
-[`PROJECT_INSTRUCTIONS.md`](https://gitlab.genworks.com/genworks/readymacs/-/blob/devo/docs/PROJECT_INSTRUCTIONS.md)
+[`PROJECT_INSTRUCTIONS.md`](https://github.com/genworks/readymacs/blob/devo/docs/PROJECT_INSTRUCTIONS.md)
 into its custom instructions, so every session starts with the
 dashboard/daily-focus routine and safe editing conventions. The same text
 works in a Claude Code `CLAUDE.md` or Codex `AGENTS.md`. For a one-shot

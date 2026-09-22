@@ -7,7 +7,7 @@ the architecture and the services — is described in
 starting the stack, stopping it, and connecting your people and your
 agents.
 
-Basalt and [Readymacs](https://gitlab.genworks.com/genworks/readymacs)
+Basalt and [Readymacs](https://github.com/genworks/readymacs)
 are the recommended, supported development environments for the
 Gendl and GDL engines, and the way to put those engines in front of
 AI agents over MCP.
@@ -169,7 +169,7 @@ same services an outside client would. The `lite` variant carries
 none; outside clients work identically either way. Which agents, and
 where each keeps its configuration, are documented with the image:
 see
-[readymacs/docker/README.md](https://gitlab.genworks.com/genworks/readymacs/-/blob/devo/docker/README.md).
+[readymacs/docker/README.md](https://github.com/genworks/readymacs/blob/devo/docker/README.md).
 
 Every entry in these registries connects directly to the service it
 names, with no intermediary gate: treat issuing them as issuing an
