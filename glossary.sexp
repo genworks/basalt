@@ -146,9 +146,45 @@
   :hail-instance-desc "reach another deployment on this box"
   :hail-aliases "(eskew/egskew remain as aliases)"
   :mcp-head "Connecting AI clients (MCP registries, written to mcp/)"
-  :welcome-shell "You are now in a fresh shell with the helpers above loaded; Ctrl-D returns to the one you came from."
+  :hail-activate "(just written: open a new terminal, or run  . %s  to use them in this one)"
   :welcome-note1 "(The next bare 'up' creates a NEW deployment under a fresh name;"
   :welcome-note2 "the old name is retired to the deployment log, containers and all.)"
+
+  ;; `help'.  The command list and examples are the same in both
+  ;; registers; only the prose blocks and the coined descriptions are
+  ;; ours.  The prose blocks are printf formats and may span lines
+  ;; (the value is emitted single-quoted, and sh reads it back whole);
+  ;; keep the %s slots of the upstream default.  The service names
+  ;; are not listed here: startup reads them from the generated
+  ;; ledger, so they follow basalt.sexp on their own.
+  :module-word "service"
+  :help-intro "Basalt -- runs a Basalt deployment: the standard one runs an
+interactive console (Emacs), two engine services (Gendl on CCL and on
+SBCL), and a monitor (autoheal), joined on one Docker network and
+health-validated.  Anything more (an ingress, licensed engine variants)
+arrives by overlay: a *-stack repo installed beside this one.
+
+Services answer to their names (listed under SERVICES below);
+containers carry a generated instance name, fresh at every full start
+(read them with '%s status', or from .muster).
+%s and ./compose-dev are the same file, so nothing that
+already says compose-dev breaks.  See BASALT.md and README.md."
+  :help-cmd-up "Start the deployment, or named services only (default: all)"
+  :help-cmd-down "Stop and remove the whole deployment"
+  :help-cmd-restart "Restart one service, or all"
+  :help-cmd-stop "Stop without removing containers"
+  :help-cmd-logs "A service's logs"
+  :help-cmd-status "Each service, its instance name, and its health"
+  :help-cmd-emacs "Attach an emacsclient terminal to the console"
+  :help-modules "    Services are defined in docker-compose.yml and any other .yml
+    files in this directory (generated from %s, the editable
+    configuration).  The services of this deployment:
+    %s,
+    plus whatever an installed overlay adds."
+  :help-variant-of "console image"
+  :help-network "    Services communicate via one Docker network per deployment,
+    carrying the deployment name (generate-env.sh records it in .ship;
+    DOCKER_NETWORK_NAME in .env)"
   :nocap-no-docker "%s: docker not found on this host -- no way to reach the console."
   :nocap-not-running "%s: the console is present but not running (container \"%s\" is stopped)."
   :nocap-start "  Start it:  docker start %s"

@@ -300,11 +300,35 @@ ensure_env() {
 }
 
 # =============================================================================
-# HELP
+# HELP -- canon's words inline, a fork's from its glossary through
+# generated/vocabulary.env, the same way as every other coined string
+# in this file (a fork used to get the canon register from its own
+# `help', 2026-09-28).  The prose blocks are printf formats, so a
+# fork's paragraph can span lines; the module slugs come from the crew
+# ledger the generator wrote, so a fork's own rooms list themselves,
+# and the canon rig stands in when there is no ledger yet.
 # =============================================================================
 show_help() {
-    cat << EOF
-Basilisk — raises a Basilisk-class ship: the standard rig flies a
+    _sh_term="${BASILISK_VOCAB_HAIL_TERM:-rmax}"
+    _sh_gui="${BASILISK_VOCAB_HAIL_GUI:-grmax}"
+    _sh_word="${BASILISK_VOCAB_MODULE_WORD:-module}"
+    _sh_WORD="$(printf '%s' "$_sh_word" | tr 'a-z' 'A-Z')"
+    # every ledger: the articles' own and each installed stack's
+    _sh_mods="$(sed -n 's/^BASILISK_MOD_[A-Z0-9_]*_NAME=//p' "${SCRIPT_DIR}"/generated/*crew.env 2>/dev/null | tr '\n' ' ')"
+    _sh_mods="${_sh_mods:-ready-room bridge engine-room sick-bay museum-chamber}"
+    _sh_first="$(printf '%s' "${_sh_mods%% *}" | tr -c 'A-Za-z0-9_' '_')"
+    # deduplicated (a stack's ledger restates the base rooms), comma
+    # separated, folded to the help's width with a continuation indent
+    # shellcheck disable=SC2086  (word-split intentional: slugs)
+    _sh_mods="$(printf '%s\n' $_sh_mods | awk '!seen[$0]++' | tr '\n' ' ' \
+        | sed 's/ *$//; s/ /, /g' | fold -s -w 66 | sed 's/ *$//; 2,$s/^/    /')"
+    # the command column: a fork's word for "module" may be longer
+    _sh_l_up="$(printf '%-18s' "up [${_sh_word}...]")"
+    _sh_l_restart="$(printf '%-18s' "restart [${_sh_word}]")"
+    _sh_l_stop="$(printf '%-18s' "stop [${_sh_word}]")"
+    _sh_l_logs="$(printf '%-18s' "logs [${_sh_word}]")"
+    # shellcheck disable=SC2059  (vocab values are printf formats)
+    printf "${BASILISK_VOCAB_HELP_INTRO:-Basilisk — raises a Basilisk-class ship: the standard rig flies a
 Ready Room (skewed-emacs), a Bridge and an Engineering Nexus (gendl),
 a Sick Bay (autoheal), and a Museum Chamber, mustered onto one network
 and validated.  Anything more — a Transporter Room, Guild Workshops —
@@ -312,36 +336,41 @@ arrives by stack pouch (a *-stack repo installed beside this one).
 
 Rooms answer to their module type slugs (ready-room, bridge, ...);
 containers wear the minted personal name of each room's keeper, fresh
-at every muster (read the roll with '$0 status', or from .muster).
-$0 and ./compose-dev are the same file, so nothing that
-already says compose-dev breaks.  See BASILISK.md and README.md.
+at every muster (read the roll with '%s status', or from .muster).
+%s and ./compose-dev are the same file, so nothing that
+already says compose-dev breaks.  See BASILISK.md and README.md.}\n" "$0" "$0"
+    cat << EOF
 
 USAGE:
     $0 <command> [options]
 
 COMMANDS:
-    up [module...]     Raise the ship, or named rooms only (default: all)
-    down               Stand the whole ship down
-    restart [module]   Relieve the watch — one room, or all
-    stop [module]      Stop without striking the berths
-    logs [module]      A room's logs
-    status             The muster: each room, its keeper, how they fare
+    ${_sh_l_up} ${BASILISK_VOCAB_HELP_CMD_UP:-Raise the ship, or named rooms only (default: all)}
+    down               ${BASILISK_VOCAB_HELP_CMD_DOWN:-Stand the whole ship down}
+    ${_sh_l_restart} ${BASILISK_VOCAB_HELP_CMD_RESTART:-Relieve the watch — one room, or all}
+    ${_sh_l_stop} ${BASILISK_VOCAB_HELP_CMD_STOP:-Stop without striking the berths}
+    ${_sh_l_logs} ${BASILISK_VOCAB_HELP_CMD_LOGS:-A room's logs}
+    status             ${BASILISK_VOCAB_HELP_CMD_STATUS:-The muster: each room, its keeper, how they fare}
     ps                 Show running containers
-    emacs              Step into the ready room (emacsclient)
+    emacs              ${BASILISK_VOCAB_HELP_CMD_EMACS:-Step into the ready room (emacsclient)}
     pull               Pull missing images (use PULL_ALWAYS=1 to pull latest)
     clean              Remove containers, networks, and images
     init               Initialize environment (.env setup via generate-env.sh)
-    install-shell-functions  Write rmax/grmax helpers (+ eskew/egskew aliases) to shell RC file(s)
+    install-shell-functions  Write ${_sh_term}/${_sh_gui} helpers (+ eskew/egskew aliases) to shell RC file(s)
     config             Show merged Docker Compose configuration
 
-MODULES:
-    The ship's rooms are defined in docker-compose.yml and any other
-    .yml files in this directory (generated from basilisk.sexp, the
+${_sh_WORD}S:
+EOF
+    # shellcheck disable=SC2059
+    printf "${BASILISK_VOCAB_HELP_MODULES:-    The ship's rooms are defined in docker-compose.yml and any other
+    .yml files in this directory (generated from %s, the
     editable SSoT — the ship's articles).  Name a room by its type
-    slug: ready-room, bridge, engine-room, sick-bay,
-    museum-chamber, plus whatever an installed stack pouch adds.
+    slug:
+    %s,
+    plus whatever an installed stack pouch adds.}\n" "${SCRIPT_NAME}.sexp" "$_sh_mods"
+    cat << EOF
 
-VARIANT SWITCHES (skewed-emacs image; anywhere on the command line):
+VARIANT SWITCHES (${BASILISK_VOCAB_HELP_VARIANT_OF:-skewed-emacs image}; anywhere on the command line):
     --lite | --default | --tui | --gui | --full
     Set EMACS_IMAGE_VARIANT for this invocation (default: full for the
     dev stack).  E.g. '$0 up --default' spins up the slim
@@ -368,14 +397,17 @@ ENVIRONMENT:
     Startup validation (see STARTUP VALIDATION section in this script):
         HEALTH_WAIT_SECS        per-service validation budget (default 30)
         HEALTH_BUDGET_<name>    per-service override (name sanitized to
-                                [A-Za-z0-9_], e.g. HEALTH_BUDGET_gendl_ccl=45)
+                                [A-Za-z0-9_], e.g. HEALTH_BUDGET_${_sh_first}=45)
         HEALTH_MAX_RESTARTS     kill+recreate retries per service (default 2)
         HEALTH_POLL_SECS        probe cadence (default 2)
 
 NETWORK:
-    Services communicate via one Docker network per instance -- the
+EOF
+    # shellcheck disable=SC2059
+    printf "${BASILISK_VOCAB_HELP_NETWORK:-    Services communicate via one Docker network per instance -- the
     ship himself, named by the yard (generate-env.sh mints into .ship,
-    surfaced as DOCKER_NETWORK_NAME in .env)
+    surfaced as DOCKER_NETWORK_NAME in .env)}\n"
+    cat << EOF
     - From host: localhost:<host-port>
     - Inter-container: <service-hostname>:<container-port>
 
@@ -2069,6 +2101,7 @@ install_shell_functions() {
     else
         _isf_file="${_isf_dir}/shell-functions.sh"
     fi
+    SHELL_HELPERS_FILE="$_isf_file"
     SHELL_HELPERS_CHANGED=false
 
     mkdir -p "${_isf_dir}"
@@ -2316,11 +2349,13 @@ refresh_emacs_runtime_config() {
 # The welcome: what an operator needs at the end of a raise -- the
 # ways to the Captain's console and the MCP registries the yard just
 # wrote -- printed after every attended raise that came up clean.
-# The Ctrl-D advice that used to close it is gone: it dated from the
-# exec'd shell inheriting the slipway lock, closed before the exec
-# since 2026-08-24, and a stand-down from that shell is fine.  What
-# remains of it is one line, printed only when the exec happens, so
-# the "prompt that never came back" is explained (2026-09-28).
+# Until 2026-09-28 a raise that (re)wrote the helpers ended by exec'ing
+# a fresh interactive shell so the calls worked at once; the prompt
+# looked identical, a cold-start operator read it as a hang, and the
+# Ctrl-D advice it needed dated from that shell inheriting the slipway
+# lock (closed before the exec since 2026-08-24).  Now the raise ends
+# like any other command, and the welcome says to open a new terminal
+# or source the helpers file (the user's ruling, 2026-09-28).
 show_skew_welcome() {
     _ssw_term="${BASILISK_VOCAB_HAIL_TERM:-rmax}"
     _ssw_gui="${BASILISK_VOCAB_HAIL_GUI:-grmax}"
@@ -2337,6 +2372,10 @@ show_skew_welcome() {
     fi
     printf "%b\n" "  \`${_ssw_term} @<instance>\` ${BLUE}-- ${BASILISK_VOCAB_HAIL_INSTANCE_DESC:-reach another ship on this box}${NC}"
     printf "%b\n" "  ${BLUE}${BASILISK_VOCAB_HAIL_ALIASES:-(\`eskew\`/\`egskew\` stay aboard as aliases)}${NC}"
+    if [ "$SHELL_HELPERS_CHANGED" = "true" ]; then
+        # shellcheck disable=SC2059  (vocab values are printf formats)
+        printf "%b\n" "  ${BLUE}$(printf "${BASILISK_VOCAB_HAIL_ACTIVATE:-(just written: open a new terminal, or run  . %s  to have them in this one)}" "${SHELL_HELPERS_FILE}")${NC}"
+    fi
     echo ""
     echo "${BASILISK_VOCAB_MCP_HEAD:-Hailing frequencies for AI clients (MCP registries, written to mcp/)}"
     echo ""
@@ -2346,11 +2385,6 @@ show_skew_welcome() {
     echo ""
     echo "${BASILISK_VOCAB_WELCOME_NOTE1:-(The next bare 'up' raises a NEW ship: the old one is buried}"
     echo "${BASILISK_VOCAB_WELCOME_NOTE2:-under his own name in the log of ships, crew and all.)}"
-    echo ""
-}
-
-show_fresh_shell_note() {
-    echo "${BASILISK_VOCAB_WELCOME_SHELL:-You are now in a fresh shell with the helpers above loaded; Ctrl-D returns to the one you came from.}"
     echo ""
 }
 
@@ -2449,18 +2483,6 @@ main() {
             if [ "$_up_daemon" = "false" ]; then
                 install_shell_functions
                 [ "$_up_rc" -eq 0 ] && show_skew_welcome
-                if [ "$SHELL_HELPERS_CHANGED" = "true" ]; then
-                    show_fresh_shell_note
-                    # Close the slipway before handing over: exec
-                    # replaces this process with the welcome shell,
-                    # which would otherwise inherit fd 9 -- and the
-                    # flock with it -- for the life of the operator's
-                    # session, blocking every later raise (found live,
-                    # 2026-08-24: an eskew attach held the slipway for
-                    # 18 minutes).
-                    exec 9>&- 2>/dev/null || true
-                    exec "${SHELL:-sh}" -i
-                fi
             fi
             # Propagate validation failure (systemd oneshot units watch
             # this exit status; the old code always exited 0 under -d).
