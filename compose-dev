@@ -22,6 +22,11 @@ cd "${0%/*}"
 
 export DOCKER_CONFIG="${HOME}/.docker"
 SCRIPT_DIR="$(pwd)"
+# The yard's own name, for every line that tells the operator what to
+# type next: a fork runs this same file under its own name, and a
+# "./basilisk down" printed at a basalt console sent a cold-start
+# operator to a command that was not there (2026-09-28).
+SCRIPT_NAME="$(basename "$0")"
 
 # THE SHELL'S SHARE OF A FORK'S DICTIONARY.  This script speaks the
 # canonical ship register natively -- the ${BASILISK_VOCAB_*} fallbacks
@@ -90,7 +95,7 @@ $_devs}"
 if [ ! -f "${SCRIPT_DIR}/docker-compose.yml" ]; then
     printf '%s\n' "[ERROR] No docker-compose.yml beside this script." >&2
     printf '%s\n' "        Basilisk runs from a clone of its own repo:" >&2
-    printf '%s\n' "            git clone <basilisk> && cd basilisk && ./basilisk up" >&2
+    printf '%s\n' "            git clone <${SCRIPT_NAME}> && cd ${SCRIPT_NAME} && ./${SCRIPT_NAME} up" >&2
     exit 1
 fi
 
@@ -308,7 +313,7 @@ arrives by stack pouch (a *-stack repo installed beside this one).
 Rooms answer to their module type slugs (ready-room, bridge, ...);
 containers wear the minted personal name of each room's keeper, fresh
 at every muster (read the roll with '$0 status', or from .muster).
-./basilisk and ./compose-dev are the same file, so nothing that
+$0 and ./compose-dev are the same file, so nothing that
 already says compose-dev breaks.  See BASILISK.md and README.md.
 
 USAGE:
@@ -463,6 +468,83 @@ take_the_slipway() {
     fi
 }
 
+# =============================================================================
+# THE BERTH CHECK -- are the ports this raise publishes still free?
+#
+# Compose binds each published port as it starts the room, and the
+# first refusal aborts the rest of the raise: the rooms that started
+# validate, the ones that did not muster as "unkept", and the operator
+# reads "All services validated" under a port error.  Found live
+# 2026-09-28 on a cold start: two standalone gendl containers from
+# before the yard, restart-policy revived at every boot, held 19080
+# and 29080, and both engines were simply absent.  So before anything
+# is created, walk the ports the raise will publish and name whoever
+# holds each one.  This ship's own rooms are not squatters (a rouse
+# recreates them in place); another ship's are, and so is any host
+# process.  Named squatters end the raise here, before the vat runs.
+# =============================================================================
+check_berths() {
+    _cb_project="$(basename "$SCRIPT_DIR" | tr 'A-Z' 'a-z')${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
+    # service/port pairs from the resolved config; with rooms named,
+    # only theirs
+    _cb_pairs="$(
+        run_compose config 2>/dev/null | awk -v want="$*" '
+            BEGIN { n = split(want, w, " "); for (i = 1; i <= n; i++) sel[w[i]] = 1 }
+            $1 == "services:" { in_services=1; next }
+            in_services && match($0, /^[[:space:]]{2}[A-Za-z0-9_-]+:$/) {
+                service=$1; sub(":", "", service); next
+            }
+            in_services && $1 == "published:" && (n == 0 || (service in sel)) {
+                port=$2; gsub(/"/, "", port)
+                if (port ~ /^[0-9]+$/) print service, port
+            }
+        '
+    )"
+    [ -n "$_cb_pairs" ] || return 0
+    # who publishes what, once: name, compose project, ports
+    _cb_holders="$(docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Ports}}' 2>/dev/null)"
+    _cb_taken=0
+    while read -r _cb_svc _cb_port; do
+        [ -n "$_cb_port" ] || continue
+        # "=" when a room of this very ship holds it (a rouse
+        # recreates him in place): no squatter, and no host check
+        # either, or docker-proxy answers for him.
+        _cb_who="$(printf '%s\n' "$_cb_holders" | awk -F'\t' -v p="$_cb_project" -v port=":${_cb_port}->" '
+            index($3, port) { print ($2 == p) ? "=" : $1; exit }')"
+        [ "$_cb_who" = "=" ] && continue
+        if [ -z "$_cb_who" ]; then
+            # not docker's: a host process, if anything
+            if command -v ss > /dev/null 2>&1; then
+                [ -n "$(ss -Hltn "sport = :${_cb_port}" 2>/dev/null)" ] && _cb_who="-"
+            elif command -v lsof > /dev/null 2>&1; then
+                lsof -nP -iTCP:"${_cb_port}" -sTCP:LISTEN > /dev/null 2>&1 && _cb_who="-"
+            fi
+        fi
+        [ -n "$_cb_who" ] || continue
+        _cb_taken=1
+        if [ "$_cb_who" = "-" ]; then
+            # shellcheck disable=SC2059  (vocab values are printf formats)
+            log_error "$(printf "${BASILISK_VOCAB_BERTH_HOST:-Berth %s (the %s) is taken by a process on this host, not a container}" "$_cb_port" "$_cb_svc")"
+            log_error "  ${BASILISK_VOCAB_BERTH_HOST_FIND:-Find it:}  ss -ltnp \"sport = :${_cb_port}\""
+        else
+            # shellcheck disable=SC2059
+            log_error "$(printf "${BASILISK_VOCAB_BERTH_TAKEN:-Berth %s (the %s) is taken by container %s, no hand of this ship}" "$_cb_port" "$_cb_svc" "$_cb_who")"
+            log_error "  ${BASILISK_VOCAB_BERTH_CLEAR:-Clear it:}  docker rm -f ${_cb_who}"
+        fi
+        # the .env line that pins this port names the knob to move it
+        _cb_var="$(sed -n "s/^\([A-Z_]*_HOST_PORT\)=${_cb_port}\$/\1/p" "${SCRIPT_DIR}/.env" 2>/dev/null | head -1)"
+        if [ -n "$_cb_var" ]; then
+            log_error "  ${BASILISK_VOCAB_BERTH_MOVE:-Or berth elsewhere:}  ${_cb_var}=<port> ./${SCRIPT_NAME} up"
+        fi
+    done << _PAIRS
+$_cb_pairs
+_PAIRS
+    if [ "$_cb_taken" -ne 0 ]; then
+        log_error "${BASILISK_VOCAB_BERTH_ABORT:-The raise stops here; nothing was created.}"
+        exit 1
+    fi
+}
+
 start_services() {
     _ss_services="$*"
     take_the_slipway
@@ -542,6 +624,9 @@ start_services() {
     # every hand, minted names the muster already announced) rides in a
     # log and surfaces only on failure; the gangway watch below reports
     # the raise in its own words.
+    # shellcheck disable=SC2086  (word-split intentional: service names)
+    check_berths $_ss_services
+
     mkdir -p "${SCRIPT_DIR}/generated"
     _ss_up_log="${SCRIPT_DIR}/generated/last-raise.log"
     # shellcheck disable=SC2086  (word-split intentional: service names)
@@ -1480,13 +1565,13 @@ merge_mcp_configs() {
         else
             log_warning "Could not copy Claude Desktop config from container"
             log_warning "(an older skewed-emacs image may not generate ${_cdc_src};"
-            log_warning " try './compose-dev up --pull' to fetch the latest image)"
+            log_warning " try './${SCRIPT_NAME} up --pull' to fetch the latest image)"
         fi
 
         refresh_host_claude_mcp
     else
         log_warning "MCP configuration merge failed (daemon answered but merge errored)"
-        log_warning "Retry with: ./compose-dev up"
+        log_warning "Retry with: ./${SCRIPT_NAME} up"
         return 1
     fi
 }
@@ -1897,7 +1982,7 @@ connect_emacs() {
 
 pull_images() {
     if [ -n "${NO_PULL}" ]; then
-        log_info "Skipping pull (NO_PULL set; explicit './basilisk pull' or 'up --pull' overrides)"
+        log_info "Skipping pull (NO_PULL set; explicit './${SCRIPT_NAME} pull' or 'up --pull' overrides)"
         return
     fi
 
@@ -2102,7 +2187,7 @@ SNIPPET
     _isf_nc_not_running="${BASILISK_VOCAB_NOCAP_NOT_RUNNING:-%s: the Captain is aboard but not on watch (container \"%s\" is not running).}"
     _isf_nc_start="${BASILISK_VOCAB_NOCAP_START:-  Rouse the Captain:  docker start %s}"
     _isf_nc_absent="${BASILISK_VOCAB_NOCAP_ABSENT:-%s: no Captain aboard this ship (no \"%s\" container).}"
-    _isf_nc_bring_up="${BASILISK_VOCAB_NOCAP_BRING_UP:-  Bring one aboard:  ./basilisk up}"
+    _isf_nc_bring_up="${BASILISK_VOCAB_NOCAP_BRING_UP:-  Bring one aboard:  ./${SCRIPT_NAME} up}"
     _isf_nc_instance="${BASILISK_VOCAB_NOCAP_INSTANCE:-  Another ship on this box?  %s @<instance>}"
     sed "s|@BASILISK_DIR@|${SCRIPT_DIR}|g; s|@CAPTAIN_ROOM_KEY@|${_isf_room_key}|g; s|@CAPTAIN_ROOM@|${_isf_room}|g; s|@NC_NO_DOCKER@|${_isf_nc_no_docker}|g; s|@NC_NOT_RUNNING@|${_isf_nc_not_running}|g; s|@NC_START@|${_isf_nc_start}|g; s|@NC_ABSENT@|${_isf_nc_absent}|g; s|@NC_BRING_UP@|${_isf_nc_bring_up}|g; s|@NC_INSTANCE@|${_isf_nc_instance}|g" \
         "${_isf_tmp}" > "${_isf_tmp}.sub" \
@@ -2228,22 +2313,44 @@ refresh_emacs_runtime_config() {
     esac
 }
 
+# The welcome: what an operator needs at the end of a raise -- the
+# ways to the Captain's console and the MCP registries the yard just
+# wrote -- printed after every attended raise that came up clean.
+# The Ctrl-D advice that used to close it is gone: it dated from the
+# exec'd shell inheriting the slipway lock, closed before the exec
+# since 2026-08-24, and a stand-down from that shell is fine.  What
+# remains of it is one line, printed only when the exec happens, so
+# the "prompt that never came back" is explained (2026-09-28).
 show_skew_welcome() {
+    _ssw_term="${BASILISK_VOCAB_HAIL_TERM:-rmax}"
+    _ssw_gui="${BASILISK_VOCAB_HAIL_GUI:-grmax}"
+    _ssw_web="$(sed -n 's/^TTYD_HOST_PORT=//p' "${SCRIPT_DIR}/.env" 2>/dev/null | tail -1)"
     echo ""
     echo "${BASILISK_VOCAB_WELCOME:-Services are Up.  The complement is aboard.}"
     echo ""
-    echo "${BASILISK_VOCAB_WELCOME_HEAD:-Shell Commands for the Basilisk Stack}"
+    echo "${BASILISK_VOCAB_WELCOME_HEAD:-Hailing the Captain (the Emacs console)}"
     echo ""
-    _ssw_term="${BASILISK_VOCAB_HAIL_TERM:-rmax}"
-    _ssw_gui="${BASILISK_VOCAB_HAIL_GUI:-grmax}"
-    printf "%b\n" "  \`${_ssw_term}\`   ${BLUE}-- ${BASILISK_VOCAB_HAIL_TERM_DESC:-hail the Captain: terminal emacsclient (attach here)}${NC}"
+    printf "%b\n" "  \`${_ssw_term}\`   ${BLUE}-- ${BASILISK_VOCAB_HAIL_TERM_DESC:-terminal emacsclient, right here (detach with ctrl-^)}${NC}"
     printf "%b\n" "  \`${_ssw_gui}\`  ${BLUE}-- graphical emacsclient (opens new window)${NC}"
+    if [ -n "$_ssw_web" ]; then
+        printf "%b\n" "  http://localhost:${_ssw_web}  ${BLUE}-- ${BASILISK_VOCAB_HAIL_WEB_DESC:-the same console in a browser (ttyd)}${NC}"
+    fi
     printf "%b\n" "  \`${_ssw_term} @<instance>\` ${BLUE}-- ${BASILISK_VOCAB_HAIL_INSTANCE_DESC:-reach another ship on this box}${NC}"
     printf "%b\n" "  ${BLUE}${BASILISK_VOCAB_HAIL_ALIASES:-(\`eskew\`/\`egskew\` stay aboard as aliases)}${NC}"
     echo ""
-    echo "NOTE: Please exit this shell with Ctrl-D before doing './basilisk down'."
-    echo "      ${BASILISK_VOCAB_WELCOME_NOTE1:-(The next bare 'up' raises a NEW ship: the old one is buried}"
-    echo "      ${BASILISK_VOCAB_WELCOME_NOTE2:-under his own name in the log of ships, crew and all.)}"
+    echo "${BASILISK_VOCAB_MCP_HEAD:-Hailing frequencies for AI clients (MCP registries, written to mcp/)}"
+    echo ""
+    printf "%b\n" "  mcp/install-claude-desktop-config  ${BLUE}-- Claude Desktop, here or on another machine (docs/CLAUDE_DESKTOP.md)${NC}"
+    printf "%b\n" "  mcp/install-claude-code-config     ${BLUE}-- Claude Code on this host (splices ~/.claude.json)${NC}"
+    printf "%b\n" "  mcp/mcp.toml, mcp/mcp-container.json  ${BLUE}-- other clients; mcp/opening-prompt.md is a first message${NC}"
+    echo ""
+    echo "${BASILISK_VOCAB_WELCOME_NOTE1:-(The next bare 'up' raises a NEW ship: the old one is buried}"
+    echo "${BASILISK_VOCAB_WELCOME_NOTE2:-under his own name in the log of ships, crew and all.)}"
+    echo ""
+}
+
+show_fresh_shell_note() {
+    echo "${BASILISK_VOCAB_WELCOME_SHELL:-You are now in a fresh shell with the helpers above loaded; Ctrl-D returns to the one you came from.}"
     echo ""
 }
 
@@ -2341,8 +2448,9 @@ main() {
 
             if [ "$_up_daemon" = "false" ]; then
                 install_shell_functions
+                [ "$_up_rc" -eq 0 ] && show_skew_welcome
                 if [ "$SHELL_HELPERS_CHANGED" = "true" ]; then
-                    show_skew_welcome
+                    show_fresh_shell_note
                     # Close the slipway before handing over: exec
                     # replaces this process with the welcome shell,
                     # which would otherwise inherit fd 9 -- and the

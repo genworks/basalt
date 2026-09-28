@@ -130,12 +130,23 @@
   :no-keeper-merge "no container found for the %s; skipping MCP config merge"
   :no-keeper-refresh "no container for the %s; skipping Emacs service refresh"
 
+  ;; The berth check: a published port already held before the raise
+  :berth-taken "Port %s (the %s) is already held by container %s, which is not part of this deployment"
+  :berth-clear "Remove it:"
+  :berth-host "Port %s (the %s) is already held by a process on this host, not a container"
+  :berth-host-find "Find it:"
+  :berth-move "Or publish elsewhere:"
+  :berth-abort "Startup stops here; nothing was created."
+
   ;; The welcome block and the generated shell helpers
   :welcome "Services are up."
-  :welcome-head "Shell commands for this Basalt deployment"
-  :hail-term-desc "terminal emacsclient into the console (attach here)"
+  :welcome-head "Reaching the console (Emacs)"
+  :hail-term-desc "terminal emacsclient into the console, right here (detach with ctrl-^)"
+  :hail-web-desc "the same console in a browser (ttyd)"
   :hail-instance-desc "reach another deployment on this box"
   :hail-aliases "(eskew/egskew remain as aliases)"
+  :mcp-head "Connecting AI clients (MCP registries, written to mcp/)"
+  :welcome-shell "You are now in a fresh shell with the helpers above loaded; Ctrl-D returns to the one you came from."
   :welcome-note1 "(The next bare 'up' creates a NEW deployment under a fresh name;"
   :welcome-note2 "the old name is retired to the deployment log, containers and all.)"
   :nocap-no-docker "%s: docker not found on this host -- no way to reach the console."
