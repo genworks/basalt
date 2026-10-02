@@ -837,12 +837,17 @@ Returns the install script content as a string."
 ;;; one reference; see `skewed--join-species'.
 
 (defun skewed--load-glossary (services-file)
-  "The glossary.sexp beside SERVICES-FILE, as a plist, or nil.
-nil -- the canonical case -- means no translation: the articles are
-already in the yard's native register."
-  (let ((f (expand-file-name "glossary.sexp"
-                             (file-name-directory services-file))))
-    (when (file-exists-p f)
+  "The glossary.sexp beside SERVICES-FILE, else the yard's own, as a
+plist, or nil.  nil -- the canonical case -- means no translation: the
+articles are already in the yard's native register.  The yard's
+glossary is the fallback because a stack repository of a register
+fork writes its sparse articles in the fork's register, as the fork's
+base articles are written, and carries no glossary of its own."
+  (let ((f (cl-find-if #'file-exists-p
+                       (list (expand-file-name "glossary.sexp"
+                                               (file-name-directory services-file))
+                             (expand-file-name "glossary.sexp" skewed-gen-yard-dir)))))
+    (when f
       (skewed--read-sexp-file f))))
 
 (defun skewed--glossary-terms (glossary)
