@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Gornskew Enterprises
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.  Distributed WITHOUT
+# ANY WARRANTY; see <https://www.gnu.org/licenses/agpl-3.0.html>.
+
+"""Claude Code PreToolUse hook: workspace files go through the Emacs room.
+
+Refuses a Bash command that reads or edits files under the yard's
+projects directory with shell line tools (cat, head, tail, sed, awk,
+grep, rg, tee, > redirection, inline python/perl/node), and names the
+lisply helper to use instead.  An instruction to prefer Emacs fades
+over a long session; a refusal at the moment of action does not.
+
+Why the Emacs room: a file written underneath one of the Emacs daemon's
+open buffers makes it ask "changed on disk?", and a question in that
+daemon stops every MCP call until someone answers it.  The lisply file
+helpers edit through the live buffer, check Lisp balance and are
+bounded; `(lisply-help)' in that room lists them.
+
+mcp/install-claude-code-config installs this into ~/.claude/settings.json
+with one --root per guarded directory (the host's PROJECTS_DIR, and
+/projects, its path inside every room).  A command carrying the comment
+`# emacs-first: allow' passes: for the Emacs room being dark, or for a
+reason the user has agreed to.  Any failure inside this hook lets the
+command through; it must never be the thing that stops work.
+
+Usage (as the hook command):
+    emacs-first-guard --root DIR [--root DIR ...] [--room NAME]
+NAME is the MCP server of the Emacs room the refusal points to
+(ready-room by default).
+Reads the PreToolUse event as JSON on stdin; prints a deny decision, or
+nothing.
+"""
+
+import json
+import os
+import shlex
+import sys
+
+BYPASS = "emacs-first: allow"
+CONTAINER_ROOT = "/projects"
+
+READERS = {"cat", "tac", "nl", "head", "tail", "less", "more", "cut",
+           "sort", "uniq", "wc"}
+SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
+EDITORS = {"sed", "awk", "gawk", "mawk", "tee"}
+INTERPRETERS = {"python", "python3", "perl", "ruby", "node"}
+INLINE_FLAGS = {"-c", "-e", "-i", "-pi", "-pe", "-ne", "-", "-p"}
+SEPARATORS = {"|", "||", "&&", ";", "&", "(", ")", "|&", ";;"}
+REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+
+HELP = {
+    "read": '(lisply-read "FILE" START END)',
+    "search": '(lisply-grep "PATTERN" "DIR" :glob "*.lisp")',
+    "edit": ('(lisply-replace "FILE" OLD NEW), or for a Lisp form '
+             '(lisply-form-replace "FILE" "name" TEXT); the harness Edit '
+             'and Write tools are fine for files that are not org'),
+}
+
+
+def parse_args(argv):
+    """Return (ROOTS, ROOM) from --root DIR ... and --room NAME."""
+    roots, room, it = [], "ready-room", iter(argv)
+    for arg in it:
+        if arg == "--root":
+            roots.append(next(it, ""))
+        elif arg.startswith("--root="):
+            roots.append(arg.split("=", 1)[1])
+        elif arg == "--room":
+            room = next(it, room) or room
+        elif arg.startswith("--room="):
+            room = arg.split("=", 1)[1] or room
+    roots = [r for r in roots if r]
+    if CONTAINER_ROOT not in roots:
+        roots.append(CONTAINER_ROOT)
+    return roots, room
+
+
+def under(path, roots, cwd, new_ok=False):
+    """Return the guarded root PATH lies in, or None.
+With NEW_OK, a path that does not exist yet counts when its directory
+does (a redirection target); otherwise it must exist (a bare grep
+pattern is not a file)."""
+    if not path or path.startswith("-"):
+        return None
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(cwd, path)
+    norm = os.path.normpath(path)
+    real = os.path.realpath(norm)
+    for root in roots:
+        for candidate in {norm, real}:
+            for r in {os.path.normpath(root), os.path.realpath(root)}:
+                if candidate == r or candidate.startswith(r.rstrip("/") + "/"):
+                    # A relative or ~ path counts only when it names
+                    # something real; a bare grep pattern does not.
+                    if candidate.startswith(CONTAINER_ROOT + "/"):
+                        return root
+                    if os.path.exists(candidate) or \
+                       (new_ok and os.path.isdir(os.path.dirname(candidate))):
+                        return root
+    return None
+
+
+def split_commands(tokens):
+    cmd = []
+    for tok in tokens:
+        if tok in SEPARATORS:
+            if cmd:
+                yield cmd
+            cmd = []
+        else:
+            cmd.append(tok)
+    if cmd:
+        yield cmd
+
+
+def tokenize(command):
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def offence(command, roots, cwd, depth=0):
+    """Return (kind, tool, path) for the first offending use, or None."""
+    for cmd in split_commands(tokenize(command)):
+        if cmd[0] == "cd" and len(cmd) > 1:
+            cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(cmd[1])))
+            continue
+        # Redirection into a guarded file, from any command.
+        for i, tok in enumerate(cmd[:-1]):
+            if tok in REDIRECTS:
+                target = cmd[i + 1]
+                if target not in REDIRECTS and under(target, roots, cwd, new_ok=True):
+                    return ("edit", "> redirection", target)
+        for i, tok in enumerate(cmd):
+            name = os.path.basename(tok)
+            rest = cmd[i + 1:]
+            if name in ("sh", "bash", "dash", "zsh") and "-c" in rest and depth < 3:
+                inner = rest[rest.index("-c") + 1:rest.index("-c") + 2]
+                if inner:
+                    hit = offence(inner[0], roots, cwd, depth + 1)
+                    if hit:
+                        return hit
+                continue
+            if name in INTERPRETERS:
+                if any(a in INLINE_FLAGS for a in rest) and \
+                   any(r in command for r in roots):
+                    return ("edit", name + " inline code", next(
+                        r for r in roots if r in command))
+                continue
+            if name in READERS or name in SEARCHERS or name in EDITORS:
+                in_place = name in ("sed", "perl") and any(
+                    a == "-i" or a.startswith("-i") or a == "--in-place"
+                    for a in rest)
+                for arg in rest:
+                    if arg in REDIRECTS:
+                        break
+                    if under(arg, roots, cwd, new_ok=(name == "tee")):
+                        if name in SEARCHERS:
+                            kind = "search"
+                        elif in_place or name == "tee":
+                            kind = "edit"
+                        else:
+                            kind = "read"
+                        return (kind, name, arg)
+    return None
+
+
+def container_path(path, roots, cwd):
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.normpath(os.path.join(cwd, path))
+    for root in roots:
+        r = os.path.normpath(root)
+        if path == r or path.startswith(r + "/"):
+            return CONTAINER_ROOT + path[len(r):]
+    return path
+
+
+def main():
+    roots, room = parse_args(sys.argv[1:])
+    event = json.load(sys.stdin)
+    if event.get("tool_name") != "Bash":
+        return
+    command = (event.get("tool_input") or {}).get("command") or ""
+    if not command or BYPASS in command:
+        return
+    cwd = event.get("cwd") or os.getcwd()
+    hit = offence(command, roots, cwd)
+    if not hit:
+        return
+    kind, tool, path = hit
+    reason = (
+        "Refused by emacs-first-guard: `%s` on %s, a workspace path.  "
+        "Workspace files go through Emacs, via "
+        "mcp__%s__%s__lisp_eval, where the path is %s.  "
+        "Use %s.  (lisply-help) lists every helper.  Why: a file changed "
+        "underneath one of the daemon's open buffers makes it prompt, and "
+        "a prompt there stops every MCP call.  If that Emacs is not "
+        "answering, say so and add the comment `# %s` to the command."
+        % (tool, path, room, room, container_path(path, roots, cwd),
+           HELP[kind], BYPASS))
+    json.dump({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason}}, sys.stdout)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:          # never the thing that stops work
+        pass
+    sys.exit(0)
