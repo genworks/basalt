@@ -108,7 +108,12 @@ Claude Desktop is just one consumer. The same generated configs work for:
 - **Claude Code** on the host: `mcp/install-claude-code-config` splices
   `mcp/claude-code-mcp.json` into `~/.claude.json` (restart Claude Code
   afterwards); or copy that file's `mcpServers` block into a `.mcp.json`
-  in your project
+  in your project.  The same script installs `mcp/emacs-first-guard` into
+  `~/.claude/settings.json`: a PreToolUse hook that refuses shell reads
+  and edits (cat, grep, sed, awk, redirection) of files under
+  `PROJECTS_DIR` and names the Emacs helper to use instead, since a file
+  changed underneath the Emacs daemon's buffers can stop it answering.
+  `BASILISK_EMACS_FIRST=0 mcp/install-claude-code-config` removes it
 - **Codex CLI**: `./basalt up` maintains `~/.codex/config.toml` inside
   the container automatically; for a host-side Codex, adapt `mcp/mcp.toml`
 - **Grok Build CLI**: the same merged TOML is written into

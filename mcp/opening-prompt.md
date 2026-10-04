@@ -9,18 +9,16 @@ The MCP servers are named for the deployment's services: `console`
 `engine-sbcl` (Common Lisp with Gendl), plus whatever extra services
 this deployment carries (`ingress`, licensed engine variants, ...).
 
-## Step 1: Learn Basic Buffer Access (MCP Docs Essentials)
-**First, read just enough to access the Dashboard:**
+## Step 1: Read the Primer
+**First, read the console's short guide:**
 
-Call: `console:console__get_docs(id="claude-md")`
+Call: `console:console__get_docs(id="primer")`
 
-**Focus on these sections only (skip the rest for now):**
-- "Basic MCP Usage Examples" -> Buffer Operations
-- "How to access Emacs state"
-- Look for examples like: `(with-current-buffer "*dashboard*" (buffer-string))`
-
-You need ~5 minutes of elisp confidence to read buffers. Don't get
-overwhelmed by paredit-mode/editing yet.
+It says how to work through the console's Emacs -- which is the
+preferred tool for reading, searching and editing workspace files, not
+only Lisp -- and the few rules that keep the daemon answering.  Then
+evaluate `(lisply-help)` once to see the file helpers you will use in
+place of cat, grep and sed.
 
 ## Step 2: Review the Dashboard
 **Now use your basic elisp skills to check current context:**
@@ -42,16 +40,12 @@ The Daily Focus shows Must/Should/Could priorities. This tells you
 what's in flight. If it is empty or errors, the user hasn't set it up —
 that's fine; skip it.
 
-## Step 3: Complete MCP Training
-**Now read the full console MCP docs:**
-
-Re-read: `console:console__get_docs(id="claude-md")` - this time completely
-
-**Key sections:**
-- File editing (paredit-mode for Lisp files!)
-- Detecting unbalanced buffers
-- Safe editing patterns
-- Shared buffer state warnings
+## Step 3: The References, When You Need Them
+The primer covers everyday work.  The longer console references are
+for cases it does not: `console:console__get_docs(id="claude-md")`
+(paredit, structural editing in depth, recovering an unbalanced file)
+and `id="main-claude-md"` (the console itself, its images, recovery
+runbooks).
 
 **If working with Gendl/Common Lisp backends, also read the docs for
 that backend** (the Dashboard lists the Lisply backends present — the

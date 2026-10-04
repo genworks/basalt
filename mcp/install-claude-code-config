@@ -27,8 +27,14 @@
 # the host form -- Claude Code runs inside WSL, so the wsl.exe wrapper
 # in the Desktop config would be wrong here.
 #
+# It also installs the emacs-first hook (mcp/emacs-first-guard) into
+# ~/.claude/settings.json -- see the note above that step below.
+#
 # Usage:  mcp/install-claude-code-config [path-to-.claude.json]
-# Restart Claude Code afterwards; the registry is read at startup.
+#   CLAUDE_SETTINGS=path   settings file for the hook (~/.claude/settings.json)
+#   BASILISK_EMACS_FIRST=0 remove this yard's hook instead of installing it
+#   EMACS_ROOM=name        the Emacs room the hook points agents to (console)
+# Restart Claude Code afterwards; both files are read at startup.
 
 set -e
 
@@ -94,5 +100,88 @@ if before:
 print("now:      %s" % ", ".join(merged))
 if kept:
     print("kept:     %s (another yard's servers)" % ", ".join(kept))
-print("\nRestart Claude Code to pick these up.")
 PY
+
+# The emacs-first hook (2026-10-04).  The ready room is the house's
+# file tool: a file written underneath one of its Emacs buffers makes
+# the daemon prompt, and a prompt there stops every MCP call.  Agents
+# are told so, and still drift back to sed and grep over a long
+# session, so mcp/emacs-first-guard refuses those at the moment of
+# action, naming the lisply helper to use instead.  It goes into
+# Claude Code's USER settings so it fires whatever directory a session
+# starts in; it only ever looks at paths under this yard's
+# PROJECTS_DIR (and /projects, the same tree inside every room).
+# Same merge discipline as the registry: this yard's own entry, or an
+# entry whose guard no longer exists on disk, is replaced; anyone
+# else's hooks stay.  BASILISK_EMACS_FIRST=0 removes this yard's entry.
+PROJECTS_ROOT="${PROJECTS_DIR:-}"
+if [ -z "$PROJECTS_ROOT" ] && [ -f "${SCRIPT_DIR}/../.env" ]; then
+    PROJECTS_ROOT=$(sed -n 's/^PROJECTS_DIR=//p' "${SCRIPT_DIR}/../.env" | tail -n 1)
+fi
+PROJECTS_ROOT="${PROJECTS_ROOT:-${HOME}/projects}"
+
+python3 - "${SCRIPT_DIR}/emacs-first-guard" "$PROJECTS_ROOT" \
+        "${CLAUDE_SETTINGS:-${HOME}/.claude/settings.json}" \
+        "${BASILISK_EMACS_FIRST:-1}" "${EMACS_ROOM:-console}" <<'PY'
+import json, sys, collections, shlex, shutil, os
+
+guard, root, dest, enabled, room = sys.argv[1:6]
+mine = os.path.realpath(guard)
+
+def guard_of(entry):
+    """The emacs-first-guard path a hook group runs, or None."""
+    for hook in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
+        try:
+            words = shlex.split(hook.get("command", ""))
+        except ValueError:
+            continue
+        for word in words:
+            if word.endswith("/mcp/emacs-first-guard"):
+                return word
+    return None
+
+if os.path.exists(dest):
+    with open(dest) as f:
+        cfg = json.load(f, object_pairs_hook=collections.OrderedDict)
+else:
+    cfg = collections.OrderedDict()
+
+hooks = cfg.setdefault("hooks", collections.OrderedDict())
+groups = hooks.get("PreToolUse") or []
+kept = []
+for entry in groups:
+    g = guard_of(entry)
+    if g and (not os.path.exists(g) or os.path.realpath(g) == mine):
+        continue
+    kept.append(entry)
+if enabled != "0":
+    kept.append(collections.OrderedDict([
+        ("matcher", "Bash"),
+        ("hooks", [collections.OrderedDict([
+            ("type", "command"),
+            ("command", "python3 %s --root %s --room %s" % (
+                shlex.quote(guard), shlex.quote(root), shlex.quote(room))),
+            ("timeout", 10)])])]))
+if kept:
+    hooks["PreToolUse"] = kept
+else:
+    hooks.pop("PreToolUse", None)
+
+if os.path.exists(dest):
+    shutil.copy2(dest, dest + ".bak-basilisk")
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+tmp = dest + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+with open(tmp) as f:        # parse it back before it becomes the real file
+    json.load(f)
+os.replace(tmp, dest)
+
+if enabled != "0":
+    print("hook:     %s guards %s (PreToolUse on Bash, in %s)" % (guard, root, dest))
+else:
+    print("hook:     emacs-first guard removed from %s" % dest)
+PY
+
+printf '\nRestart Claude Code to pick these up.\n'
