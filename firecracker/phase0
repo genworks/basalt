@@ -1,0 +1,276 @@
+#!/bin/bash
+# Phase 0 of the Firecracker substrate: one Gendl (or GDL) image as a
+# microVM, snapshot it warm, restore clones, measure.  See README.md.
+#
+#   phase0 fetch                      firecracker binary + guest kernel
+#   phase0 rootfs IMAGE NAME          docker image -> NAME.ext4 (+ guest init)
+#   phase0 net                        the first VM's tap (sudo)
+#   phase0 boot NAME                  boot NAME.ext4, wait for the lisply ping
+#   phase0 boot NAME -f               same, console in this terminal (see configure)
+#   phase0 configure NAME             the API calls for a VM started with -f
+#   phase0 snapshot NAME              pause + full snapshot of the running NAME
+#   phase0 restore NAME N             clone N (netns fcN) from NAME's snapshot
+#   phase0 ping NAME [N]              ping the VM (or clone N) and eval a form
+#   phase0 measure                    RSS/PSS of every firecracker, host memory
+#   phase0 stop [NAME|N|all]          kill VMs; `clean` also removes taps/netns
+#
+# Artifacts live under $FC_DIR (default ~/firecracker-phase0), never in
+# the repository.  Pinned versions are the two lines below.
+
+set -euo pipefail
+
+FC_VERSION=${FC_VERSION:-v1.17.0}
+FC_KERNEL=${FC_KERNEL:-firecracker-ci/v1.15/x86_64/vmlinux-6.1.155}   # the CI kernel: ip= autoconfig, virtio, ext4
+
+FC_DIR=${FC_DIR:-$HOME/firecracker-phase0}
+KIT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ARCH=x86_64
+S3=https://s3.amazonaws.com/spec.ccfc.min
+VCPUS=${VCPUS:-2}
+MEM_MIB=${MEM_MIB:-1024}
+ROOTFS_SIZE=${ROOTFS_SIZE:-3G}
+TAP=fctap0                 # baked into the snapshot; clones get the same name in their own netns
+GUEST_IP=172.16.0.2
+TAP_IP=172.16.0.1
+GUEST_MAC=06:00:AC:10:00:02
+
+die() { echo "phase0: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null || die "need $1"; }
+now() { date +%s.%N; }
+since() { awk -v a="$1" -v b="$(now)" 'BEGIN{printf "%.2f", b-a}'; }
+
+bin=$FC_DIR/bin/firecracker
+kernel=$FC_DIR/vmlinux
+run=$FC_DIR/run
+mkdir -p "$FC_DIR/bin" "$run"
+
+api() {  # api SOCK METHOD PATH [JSON]  -> HTTP code
+    curl -sS --unix-socket "$1" -X "$2" "http://localhost$3" \
+         -H 'Accept: application/json' -H 'Content-Type: application/json' \
+         ${4:+-d "$4"} -o /dev/null -w '%{http_code}'
+}
+expect() {  # expect CODE SOCK METHOD PATH [JSON]
+    local want=$1; shift
+    local got; got=$(api "$@")
+    [ "$got" = "$want" ] || die "$2 $3 -> HTTP $got (wanted $want); read $run/*.console"
+}
+wait_sock() { for _ in $(seq 1 100); do [ -S "$1" ] && return; sleep 0.1; done; die "no API socket at $1"; }
+guest_port() { case $1 in *gdl*) echo 9088 ;; *) echo 9080 ;; esac; }
+curl_in() { local ns=$1; shift; if [ -n "$ns" ]; then sudo ip netns exec "$ns" curl "$@"; else curl "$@"; fi; }
+
+wait_ping() {  # wait_ping NETNS PORT T0
+    local ns=$1 port=$2 t0=$3
+    for _ in $(seq 1 240); do
+        if [ "$(curl_in "$ns" -s -o /dev/null -w '%{http_code}' --max-time 1 "http://$GUEST_IP:$port/lisply/ping-lisp")" = 200 ]; then
+            echo "ping OK after $(since "$t0") s"
+            return
+        fi
+        sleep 0.5
+    done
+    die "no ping after 120 s; read the console log under $run"
+}
+
+# --- fetch ----------------------------------------------------------------
+cmd_fetch() {
+    need curl; need tar
+    if [ ! -x "$bin" ]; then
+        echo "firecracker $FC_VERSION"
+        local url=https://github.com/firecracker-microvm/firecracker/releases/download/$FC_VERSION/firecracker-$FC_VERSION-$ARCH.tgz
+        curl -fsSL "$url" | tar -xz -C "$FC_DIR/bin" --strip-components=1 \
+             "release-$FC_VERSION-$ARCH/firecracker-$FC_VERSION-$ARCH"
+        mv "$FC_DIR/bin/firecracker-$FC_VERSION-$ARCH" "$bin"
+        chmod +x "$bin"
+    fi
+    if [ ! -f "$kernel" ]; then
+        echo "kernel $FC_KERNEL"
+        curl -fsSL -o "$kernel" "$S3/$FC_KERNEL"
+        curl -fsSL -o "$kernel.config" "$S3/$FC_KERNEL.config"
+    fi
+    "$bin" --version | head -1
+    ls -lh "$kernel"
+}
+
+# --- rootfs ---------------------------------------------------------------
+# docker export -> a tree -> mkfs.ext4 -d, all inside a throwaway debian
+# container, so ownership survives without root on the host.
+cmd_rootfs() {
+    local image=${1:?image} name=${2:?name}
+    need docker
+    local cid; cid=$(docker create "$image")
+    docker export "$cid" -o "$FC_DIR/$name.tar"
+    docker rm "$cid" >/dev/null
+    docker run --rm -v "$FC_DIR:/work" -v "$KIT:/kit:ro" -e NAME="$name" -e SIZE="$ROOTFS_SIZE" \
+           -e DEBIAN_FRONTEND=noninteractive debian:13-slim bash -euo pipefail -c '
+        apt-get -qq update >/dev/null && apt-get -qq install -y e2fsprogs >/dev/null
+        rm -rf /work/tree && mkdir /work/tree && tar -C /work/tree -xf /work/$NAME.tar
+        t=/work/tree
+        if   [ -d $t/opt/gendl ];        then user=gendl-user; port=9080
+        elif [ -d $t/opt/genworks-gdl ]; then user=gdl-user;   port=9088
+        else echo "not a gendl or gdl image" >&2; exit 1; fi
+        install -m 755 /kit/guest-init $t/sbin/init
+        printf "GUEST_USER=%s\nHTTP_PORT=%s\n" $user $port > $t/etc/phase0.env
+        echo $NAME > $t/etc/hostname
+        printf "nameserver 1.1.1.1\n" > $t/etc/resolv.conf
+        # iproute2 and procps for lo and for looking around: best effort
+        chroot $t sh -c "apt-get -qq update >/dev/null && apt-get -qq install -y --no-install-recommends iproute2 procps >/dev/null && apt-get clean" \
+            || echo "  (iproute2 not installed in the guest; lo stays down, which the services do not need)"
+        rm -f /work/$NAME.ext4 && truncate -s $SIZE /work/$NAME.ext4
+        mkfs.ext4 -q -F -L $NAME -d $t /work/$NAME.ext4
+        rm -rf $t
+        echo "  user=$user port=$port"'
+    rm -f "$FC_DIR/$name.tar"
+    ls -lsh "$FC_DIR/$name.ext4"
+}
+
+# --- net ------------------------------------------------------------------
+cmd_net() {
+    need sudo
+    sudo ip link del $TAP 2>/dev/null || true
+    sudo ip tuntap add dev $TAP mode tap user "$USER"
+    sudo ip addr add $TAP_IP/30 dev $TAP
+    sudo ip link set dev $TAP up
+    echo "$TAP $TAP_IP/30 up; the guest will be $GUEST_IP (no egress NAT: Phase 0 needs none)"
+}
+
+# --- boot -----------------------------------------------------------------
+sock() { echo "$run/$1.sock"; }
+vm_prepare() {  # vm_prepare NAME -> the VM's directory, with relative rootfs and kernel
+    local name=$1 vmdir=$FC_DIR/vm/$1; mkdir -p "$vmdir"
+    # Relative paths from the VM's own directory: the snapshot records
+    # them, and a clone restored from another directory finds ITS copy.
+    ln -sfn "$FC_DIR/$name.ext4" "$vmdir/rootfs.ext4"
+    ln -sfn "$kernel" "$vmdir/vmlinux"
+    echo "$vmdir"
+}
+boot_args() { echo "console=ttyS0 reboot=k panic=1 pci=off rw ip=$GUEST_IP::$TAP_IP:255.255.255.252:$1:eth0:off${2:-}"; }
+
+cmd_boot() {
+    local name=${1:?name} fg=${2:-}
+    [ -x "$bin" ] && [ -f "$kernel" ] || die "run fetch first"
+    [ -f "$FC_DIR/$name.ext4" ] || die "no $FC_DIR/$name.ext4; run rootfs"
+    [ -r /dev/kvm ] && [ -w /dev/kvm ] || die "/dev/kvm not accessible: add $USER to the kvm group (then newgrp kvm)"
+    ip link show $TAP >/dev/null 2>&1 || die "no $TAP; run net"
+    local s; s=$(sock "$name"); rm -f "$s"
+    local vmdir; vmdir=$(vm_prepare "$name")
+    if [ "$fg" = -f ]; then
+        rm -f "$run/$name.pid"          # configure reads its absence as "foreground"
+        echo "foreground: this terminal is the guest console (boot arg phase0.shell gives a shell on it)."
+        echo "From another shell:  phase0 configure $name"
+        (cd "$vmdir" && exec "$bin" --api-sock "$s" --id "$name")
+        return
+    fi
+    (cd "$vmdir" && nohup "$bin" --api-sock "$s" --id "$name" </dev/null >"$run/$name.console" 2>&1 &
+     echo $! > "$run/$name.pid")
+    echo "$name started (pid $(cat "$run/$name.pid"), console $run/$name.console)"
+    cmd_configure "$name"
+}
+
+cmd_configure() {
+    local name=${1:?name} s; s=$(sock "$name"); wait_sock "$s"
+    local shell=; grep -qs . "$run/$name.pid" || shell=" phase0.shell"     # foreground boots get the console shell
+    local port; port=$(guest_port "$name")
+    local t0; t0=$(now)
+    expect 204 "$s" PUT /machine-config "{\"vcpu_count\": $VCPUS, \"mem_size_mib\": $MEM_MIB}"
+    expect 204 "$s" PUT /boot-source   "{\"kernel_image_path\": \"vmlinux\", \"boot_args\": \"$(boot_args "$name" "$shell")\"}"
+    expect 204 "$s" PUT /drives/rootfs "{\"drive_id\": \"rootfs\", \"path_on_host\": \"rootfs.ext4\", \"is_root_device\": true, \"is_read_only\": false}"
+    expect 204 "$s" PUT /network-interfaces/eth0 "{\"iface_id\": \"eth0\", \"guest_mac\": \"$GUEST_MAC\", \"host_dev_name\": \"$TAP\"}"
+    expect 204 "$s" PUT /actions "{\"action_type\": \"InstanceStart\"}"
+    echo "waiting for the lisply ping on $GUEST_IP:$port"
+    wait_ping "" "$port" "$t0"
+}
+
+# --- snapshot -------------------------------------------------------------
+cmd_snapshot() {
+    local name=${1:?name} s; s=$(sock "$name")
+    local snap=$FC_DIR/snap/$name; mkdir -p "$snap"
+    expect 204 "$s" PATCH /vm '{"state": "Paused"}'
+    local t0; t0=$(now)
+    expect 204 "$s" PUT /snapshot/create "{\"snapshot_type\": \"Full\", \"snapshot_path\": \"$snap/vmstate\", \"mem_file_path\": \"$snap/mem\"}"
+    echo "snapshot written in $(since "$t0") s"
+    # The disk as it was at the pause: every clone starts from this copy.
+    cp --sparse=always "$FC_DIR/$name.ext4" "$snap/rootfs.ext4"
+    ls -lsh "$snap"
+    echo "$name stays paused; 'phase0 stop $name' frees it (the clones do not need it)"
+}
+
+# --- restore --------------------------------------------------------------
+# Clone N lives in network namespace fcN with its own fctap0 at the
+# snapshotted address, so every clone keeps the guest IP the snapshot
+# baked in.  Reach it with `ip netns exec fcN curl ...` (phase0 ping).
+# Firecracker runs as root here (ip netns exec), which Phase 0 accepts;
+# the jailer is the production answer.
+cmd_restore() {
+    local name=${1:?name} n=${2:?clone number}; [ "$n" -ge 1 ] || die "clone numbers start at 1"
+    local snap=$FC_DIR/snap/$name; [ -f "$snap/vmstate" ] || die "no snapshot of $name"
+    local ns=fc$n cdir=$FC_DIR/clone/$name-$n; mkdir -p "$cdir"
+    if ! sudo ip netns list | grep -qw "$ns"; then
+        sudo ip netns add "$ns"
+        sudo ip netns exec "$ns" ip tuntap add dev $TAP mode tap
+        sudo ip netns exec "$ns" ip addr add $TAP_IP/30 dev $TAP
+        sudo ip netns exec "$ns" ip link set dev $TAP up
+        sudo ip netns exec "$ns" ip link set lo up
+    fi
+    local t0; t0=$(now)
+    cp --sparse=always "$snap/rootfs.ext4" "$cdir/rootfs.ext4"     # its own disk, same relative name
+    ln -sfn "$kernel" "$cdir/vmlinux"
+    local s=$run/$name-$n.sock; sudo rm -f "$s"
+    # shellcheck disable=SC2024  # the console log is the user's file on purpose
+    (cd "$cdir" && sudo nohup ip netns exec "$ns" "$bin" --api-sock "$s" --id "$name-$n" </dev/null >"$run/$name-$n.console" 2>&1 &
+     echo $! > "$run/$name-$n.pid")
+    wait_sock "$s"; sudo chmod a+rw "$s"
+    local t1; t1=$(now)
+    expect 204 "$s" PUT /snapshot/load "{\"snapshot_path\": \"$snap/vmstate\", \"mem_backend\": {\"backend_path\": \"$snap/mem\", \"backend_type\": \"File\"}, \"resume_vm\": true}"
+    echo "clone $n: disk copy $(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.2f", b-a}') s, load+resume $(since "$t1") s"
+    wait_ping "$ns" "$(guest_port "$name")" "$t1"
+}
+
+# --- ping / measure / stop ------------------------------------------------
+cmd_ping() {
+    local name=${1:?name} n=${2:-} ns=; [ -n "$n" ] && ns=fc$n
+    local port; port=$(guest_port "$name")
+    curl_in "$ns" -s --max-time 5 "http://$GUEST_IP:$port/lisply/ping-lisp"; echo
+    curl_in "$ns" -s --max-time 30 -X POST "http://$GUEST_IP:$port/lisply/lisp-eval" \
+        -H 'Content-Type: application/json' \
+        -d '{"code": "(list (lisp-implementation-type) (lisp-implementation-version) (machine-instance))"}'; echo
+}
+
+cmd_measure() {
+    echo "host: $(free -m | awk '/Mem:/{printf "%d MiB used, %d MiB available", $3, $7}')"
+    printf '%-14s %8s %10s %10s %10s\n' vm pid 'RSS MiB' 'PSS MiB' 'shared MiB'
+    local f
+    for f in "$run"/*.pid; do
+        [ -f "$f" ] || continue
+        local p id fp; p=$(cat "$f"); id=$(basename "$f" .pid)
+        # a clone's pid file holds sudo's pid; the firecracker is its child
+        fp=$(pgrep -P "$p" -f firecracker | head -1); [ -n "$fp" ] || fp=$p
+        kill -0 "$fp" 2>/dev/null || continue
+        sudo awk -v id="$id" -v pid="$fp" '
+            /^Rss:/ {rss+=$2} /^Pss:/ {pss+=$2} /^Shared_(Clean|Dirty):/ {sh+=$2}
+            END {printf "%-14s %8s %10.0f %10.0f %10.0f\n", id, pid, rss/1024, pss/1024, sh/1024}' "/proc/$fp/smaps_rollup"
+    done
+    echo "(PSS splits a shared page among the VMs sharing it: the sum of PSS is what the VMs cost the host)"
+}
+
+cmd_stop() {
+    local what=${1:-all} f
+    for f in "$run"/*.pid; do
+        [ -f "$f" ] || continue
+        local id; id=$(basename "$f" .pid)
+        case $what in all) ;; "$id") ;; *) [[ $id == *-$what ]] || continue ;; esac
+        sudo pkill -TERM -P "$(cat "$f")" 2>/dev/null || true
+        kill -TERM "$(cat "$f")" 2>/dev/null || sudo kill -TERM "$(cat "$f")" 2>/dev/null || true
+        rm -f "$f" "$run/$id.sock"; echo "stopped $id"
+    done
+}
+cmd_clean() {
+    cmd_stop all
+    sudo ip link del $TAP 2>/dev/null || true
+    local ns; for ns in $(sudo ip netns list | awk '/^fc[0-9]+/{print $1}'); do sudo ip netns del "$ns"; done
+    echo "taps and namespaces removed; artifacts kept in $FC_DIR"
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+    fetch|rootfs|net|boot|configure|snapshot|restore|ping|measure|stop|clean) "cmd_$cmd" "$@" ;;
+    *) sed -n '2,17p' "$0"; exit 1 ;;
+esac

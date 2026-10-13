@@ -1,0 +1,49 @@
+#!/bin/bash
+# PID 1 inside a Phase 0 microVM.  The rootfs is a docker export of a
+# genworks/gendl or genworks/gdl image: no init system, so this script
+# does the little a Lisp service needs and then starts the image's own
+# entrypoint (/etc/rc.local) as the image's user.
+#
+# Installed by `phase0 rootfs` as /sbin/init; /etc/phase0.env (also
+# written there) names the user and the HTTP port.
+
+mnt() { mountpoint -q "$2" || mount -t "$1" "$1" "$2" "${@:3}"; }
+mnt proc /proc
+mnt sysfs /sys
+mnt devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts /dev/shm
+mnt devpts /dev/pts -o gid=5,mode=620
+mnt tmpfs /dev/shm
+mnt tmpfs /tmp
+mnt tmpfs /run
+mnt cgroup2 /sys/fs/cgroup 2>/dev/null
+
+hostname "$(cat /etc/hostname 2>/dev/null || echo phase0)"
+# The kernel configured eth0 from the ip= boot argument; lo is ours.
+command -v ip >/dev/null && ip link set lo up
+
+. /etc/phase0.env            # GUEST_USER, HTTP_PORT
+
+echo "phase0: $(hostname) up, $(nproc) cpu, $(awk '/MemTotal/{print $2}' /proc/meminfo) kB; starting services as $GUEST_USER on :$HTTP_PORT"
+
+# A shell on the serial console when asked for (boot arg phase0.shell),
+# for looking around from `phase0 boot -f`.
+if grep -q phase0.shell /proc/cmdline; then
+    setsid bash -c 'exec bash </dev/ttyS0 >/dev/ttyS0 2>&1' &
+fi
+
+export HOME=/home/$GUEST_USER USER=$GUEST_USER LOGNAME=$GUEST_USER
+export HTTP_PORT START_HTTP=true START_HTTPS=false START_SWANK=false START_TELNET=false
+cd "$HOME" || cd /
+setpriv --reuid="$GUEST_USER" --regid="$GUEST_USER" --init-groups /etc/rc.local &
+service=$!
+
+# PID 1 must never exit (the kernel panics, and panic=1 reboots).
+# Reap what comes back, and if the service itself dies say so and idle.
+while :; do
+    wait -n 2>/dev/null
+    if ! kill -0 $service 2>/dev/null; then
+        echo "phase0: the service exited; idling.  (poweroff: echo o > /proc/sysrq-trigger)"
+        exec sleep infinity
+    fi
+done
