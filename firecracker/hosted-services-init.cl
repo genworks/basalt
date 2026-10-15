@@ -51,13 +51,26 @@
       (symbol-value (intern "*TOLL-PROVIDER*" :prompt-lab)) :stripe
       (symbol-value (intern "*DEPLOYMENT-PAYMENTS?*" :prompt-lab)) t)
 
-;; The gate's hosting ledger is keyed by the lab's name: this VM reports
-;; its compiles and runs under the lab that deployed the application,
-;; so the author's allowance and what they bought apply here.
+;; The gate's ledgers are keyed by the lab's name: this VM reports its
+;; compiles and runs, and opens its tolls, under the lab that deployed
+;; the application, so the author's allowance, what they bought and the
+;; payments it takes are the lab's.  The lab's configured name
+;; (*lab-name*, demos parameters.lisp) is the field; a checkout from
+;; before it has the function overridden instead.
 (let ((lab (hosted-arg "hosted.lab")))
   (when lab
-    (setf (symbol-function (intern "DEPLOYMENT-LAB-NAME" :prompt-lab))
-          (lambda () lab))))
+    (if (find-symbol "*LAB-NAME*" :prompt-lab)
+        (setf (symbol-value (intern "*LAB-NAME*" :prompt-lab)) lab)
+        (setf (symbol-function (intern "DEPLOYMENT-LAB-NAME" :prompt-lab))
+              (lambda () lab)))))
+
+;; This VM books nothing (*books?*, demos parameters.lisp): a toll it
+;; serves is granted on the gate's settled word and the line is booked
+;; by the lab's own sweep, in the lab's books; hosting bought at its
+;; paused page is credited at the gate and booked by the same sweep.
+;; The books on this disk would be a ledger nobody reads.
+(when (find-symbol "*BOOKS?*" :prompt-lab)
+  (setf (symbol-value (intern "*BOOKS?*" :prompt-lab)) nil))
 
 (funcall (intern "PUBLISH-PROMPT-LAB!" :prompt-lab))
 

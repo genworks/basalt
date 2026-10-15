@@ -17,14 +17,16 @@
 #
 # Per-VM settings (environment): VCPUS (1), MEM_MIB (512), GATE_URL
 # (the gate's Messages door as the VM reaches it), LAB (the lab's name
-# at the gate), LOCK (the lab's own doors' password in the VM).
+# at the gate: the SAME name the lab itself is configured with, its
+# *lab-name*, so the VM's meter reports and tolls land on the lab's
+# ledgers), LOCK (the lab's own doors' password in the VM).
 
 set -euo pipefail
 FC_DIR=${FC_DIR:-/fc}
 VCPUS=${VCPUS:-1}
 MEM_MIB=${MEM_MIB:-512}
 GATE_URL=${GATE_URL:-http://transporter-room/llm/messages}
-LAB=${LAB:-gendl@/projects/.state/prompt-lab-deployed/}
+LAB=${LAB:-prompt-lab}
 LOCK=${LOCK:-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')}
 GUEST_PORT=9080
 bin=$FC_DIR/bin/firecracker; kernel=$FC_DIR/vmlinux; run=$FC_DIR/run; mkdir -p "$run"
@@ -42,6 +44,19 @@ slot_of() {  # a stable small number from the name
 }
 tap_ip() { echo "172.16.$1.1"; }
 guest_ip() { echo "172.16.$1.2"; }
+
+# The guest has no resolver for the ship's names (its resolv.conf names a
+# public one), so a host name in GATE_URL is resolved HERE, where the
+# network's DNS answers, and the guest gets the address.
+guest_gate_url() {
+    local url=$1 host ip
+    host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')
+    case $host in
+        *[!0-9.]*) ip=$(getent ahostsv4 "$host" | awk '{print $1; exit}')   # IPv4: the guest's /30 routes nothing else
+                   [ -n "$ip" ] && url=${url/"$host"/$ip} ;;
+    esac
+    echo "$url"
+}
 
 net_up() {  # net_up NAME PORT -> tap, NAT out, DNAT in
     local name=$1 port=$2 slot; slot=$(slot_of "$name"); local tap=host$slot
@@ -108,7 +123,7 @@ cmd_up() {
     echo $! > "$run/$name.pid"
     wait_sock "$s"
     local t0; t0=$(now)
-    local args="console=ttyS0 reboot=k panic=1 pci=off rw ip=$(guest_ip "$slot")::$(tap_ip "$slot"):255.255.255.252:$name:eth0:off hosted.gate=$GATE_URL hosted.lab=$LAB hosted.lock=$LOCK"
+    local args="console=ttyS0 reboot=k panic=1 pci=off rw ip=$(guest_ip "$slot")::$(tap_ip "$slot"):255.255.255.252:$name:eth0:off hosted.gate=$(guest_gate_url "$GATE_URL") hosted.lab=$LAB hosted.lock=$LOCK"
     expect 204 "$s" PUT /machine-config "{\"vcpu_count\": $VCPUS, \"mem_size_mib\": $MEM_MIB}"
     expect 204 "$s" PUT /boot-source   "{\"kernel_image_path\": \"vmlinux\", \"boot_args\": \"$args\"}"
     expect 204 "$s" PUT /drives/rootfs "{\"drive_id\": \"rootfs\", \"path_on_host\": \"rootfs.ext4\", \"is_root_device\": true, \"is_read_only\": false}"

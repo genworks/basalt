@@ -171,8 +171,9 @@ survive the VM's restarts.  `up` makes it when it is missing.
 address so the guest reaches the gate, and a DNAT from the hangar's
 PORT to the guest's 9080 so the proxy reaches the application; the
 kernel command line carries `hosted.gate` (the gate's Messages door),
-`hosted.lab` (the lab's name at the gate, so the VM's meter reports
-land on the author's hosting ledger, not a ledger of their own) and
+`hosted.lab` (the lab's name at the gate -- the name the lab itself is
+configured with, so the VM's meter reports and the tolls it opens land
+on the author's ledgers at the lab, not on ledgers of the VM's own) and
 `hosted.lock`.  `VCPUS` and `MEM_MIB` are the VM's caps (1 and 512
 are enough for one application); the disks are the third cap.  The
 proxy's rule for the deployment names the hangar and the port, with
@@ -202,10 +203,17 @@ doors 403 inside the VM; the watcher taking the VM down within its
 interval of the gate's stop and bringing it back on the next fitting
 report.
 
-**Not here yet:** the application's side doors (tollbooths, hosting
-top-up, the app's files) are published at the lab's prefix, so the
-proxy sends them to the lab, not the VM -- a deployment's doors under
-its own address is the next rung; the VM books nothing (the lab's
-sweep books what the gate settled); a snapshot after the runtime is
-up, restored per deployment, in place of the 10 s compile; the jailer;
-a paused page from the proxy while the VM is down.
+**The application's side doors** -- its tollbooths paid and the way
+back from the card page, its files, hosting bought at its paused page
+-- answer under the deployment's own address, `<prefix>/d/NAME/<door>`,
+so the one rule above carries the whole application to the VM.  **The
+VM books nothing:** it grants a toll on the gate's settled word and
+confirms hosting bought, and the lab's own sweep books both from what
+the gate lists as settled and not yet booked, as it does for a payer
+who never came back.  The lab's name rides in with `hosted.lab` and is
+the name the lab is configured with, so one ledger per lab at the
+gate.
+
+**Not here yet:** a snapshot after the runtime is up, restored per
+deployment, in place of the 10 s compile; the jailer; a paused page
+from the proxy while the VM is down.
