@@ -159,8 +159,10 @@ cmd_boot() {
         (cd "$vmdir" && exec "$bin" --api-sock "$s" --id "$name")
         return
     fi
-    (cd "$vmdir" && nohup "$bin" --api-sock "$s" --id "$name" </dev/null >"$run/$name.console" 2>&1 &
-     echo $! > "$run/$name.pid")
+    # exec in the subshell, so $! is firecracker's own pid (`&` after
+    # a `cd && nohup ...` list backgrounds the list's subshell instead)
+    (cd "$vmdir" && exec nohup "$bin" --api-sock "$s" --id "$name" </dev/null >"$run/$name.console" 2>&1) &
+    echo $! > "$run/$name.pid"
     echo "$name started (pid $(cat "$run/$name.pid"), console $run/$name.console)"
     cmd_configure "$name"
 }

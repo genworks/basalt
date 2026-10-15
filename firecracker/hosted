@@ -1,0 +1,194 @@
+#!/bin/bash
+# The hangar: one Firecracker microVM per hosted application, behind
+# the ship's reverse proxy.  Runs INSIDE the hangar container (root,
+# /dev/kvm, /dev/net/tun, NET_ADMIN, ip_forward on) with $FC_DIR
+# mounted; the proxy's rule for the application names this container
+# and the VM's published port.
+#
+#   hosted disk NAME [DIR]     NAME.data.ext4 (64 MiB) from the deployment's directory,
+#                              DIR or /deployments/<engine>/NAME (the lab's deployed root,
+#                              mounted read-only); `up` makes it when it is missing
+#   hosted up NAME [PORT]      boot NAME's VM (rootfs hosted.ext4 + NAME.data.ext4),
+#                              publish it on PORT (default 9080) of this container
+#   hosted down NAME           stop it
+#   hosted status              every VM: pid, RSS and PSS, the deployment door's answer
+#   hosted watch NAME          poll the gate's hosting for NAME; stop the VM
+#                              while it is stopped at the gate, start it when not
+#
+# Per-VM settings (environment): VCPUS (1), MEM_MIB (512), GATE_URL
+# (the gate's Messages door as the VM reaches it), LAB (the lab's name
+# at the gate), LOCK (the lab's own doors' password in the VM).
+
+set -euo pipefail
+FC_DIR=${FC_DIR:-/fc}
+VCPUS=${VCPUS:-1}
+MEM_MIB=${MEM_MIB:-512}
+GATE_URL=${GATE_URL:-http://transporter-room/llm/messages}
+LAB=${LAB:-gendl@/projects/.state/prompt-lab-deployed/}
+LOCK=${LOCK:-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')}
+GUEST_PORT=9080
+bin=$FC_DIR/bin/firecracker; kernel=$FC_DIR/vmlinux; run=$FC_DIR/run; mkdir -p "$run"
+
+die() { echo "hosted: $*" >&2; exit 1; }
+now() { date +%s.%N; }
+since() { awk -v a="$1" -v b="$(now)" 'BEGIN{printf "%.2f", b-a}'; }
+api() { curl -sS --unix-socket "$1" -X "$2" "http://localhost$3" -H 'Accept: application/json' -H 'Content-Type: application/json' ${4:+-d "$4"} -o /dev/null -w '%{http_code}'; }
+expect() { local want=$1; shift; local got; got=$(api "$@"); [ "$got" = "$want" ] || die "$2 $3 -> HTTP $got (wanted $want); read $run/*.console"; }
+wait_sock() { for _ in $(seq 1 100); do [ -S "$1" ] && return; sleep 0.1; done; die "no API socket at $1"; }
+
+# Each VM: a /30 of its own off 172.16.N.0, tap hostN, guest .2
+slot_of() {  # a stable small number from the name
+    printf '%d' $(( ( $(printf '%s' "$1" | cksum | cut -d' ' -f1) % 200 ) + 1 ))
+}
+tap_ip() { echo "172.16.$1.1"; }
+guest_ip() { echo "172.16.$1.2"; }
+
+net_up() {  # net_up NAME PORT -> tap, NAT out, DNAT in
+    local name=$1 port=$2 slot; slot=$(slot_of "$name"); local tap=host$slot
+    ip link del "$tap" 2>/dev/null || true
+    ip tuntap add dev "$tap" mode tap
+    ip addr add "$(tap_ip "$slot")/30" dev "$tap"
+    ip link set dev "$tap" up
+    # the guest reaches the gate through this container's address
+    iptables -t nat -C POSTROUTING -s "$(guest_ip "$slot")/32" -j MASQUERADE 2>/dev/null || \
+        iptables -t nat -A POSTROUTING -s "$(guest_ip "$slot")/32" -j MASQUERADE
+    # and the proxy reaches the guest on this container's PORT
+    iptables -t nat -A PREROUTING -p tcp --dport "$port" -j DNAT --to-destination "$(guest_ip "$slot"):$GUEST_PORT"
+    iptables -t nat -A OUTPUT -o lo -p tcp --dport "$port" -j DNAT --to-destination "$(guest_ip "$slot"):$GUEST_PORT"
+    iptables -C FORWARD -d "$(guest_ip "$slot")/32" -p tcp --dport $GUEST_PORT -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -d "$(guest_ip "$slot")/32" -p tcp --dport $GUEST_PORT -j ACCEPT
+    iptables -C FORWARD -s "$(guest_ip "$slot")/32" -j ACCEPT 2>/dev/null || iptables -A FORWARD -s "$(guest_ip "$slot")/32" -j ACCEPT
+    echo "$tap"
+}
+net_down() {
+    local name=$1 port=$2 slot; slot=$(slot_of "$name")
+    iptables -t nat -D PREROUTING -p tcp --dport "$port" -j DNAT --to-destination "$(guest_ip "$slot"):$GUEST_PORT" 2>/dev/null || true
+    iptables -t nat -D OUTPUT -o lo -p tcp --dport "$port" -j DNAT --to-destination "$(guest_ip "$slot"):$GUEST_PORT" 2>/dev/null || true
+    ip link del "host$slot" 2>/dev/null || true
+}
+
+# The deployment's disk: the lab's record and model file for NAME, as
+# the lab's deployed root holds them (<root>/<engine>/<name>/), laid
+# out the way the hosted runtime reads them, owned by the image's user.
+cmd_disk() {
+    local name=${1:?name} src=${2:-}
+    if [ -z "$src" ]; then
+        src=$(ls -d /deployments/*/"$name" 2>/dev/null | head -1)
+        [ -n "$src" ] || die "no /deployments/<engine>/$name; name the directory"
+    fi
+    [ -f "$src/deployment.json" ] || die "$src holds no deployment.json"
+    local engine; engine=$(basename "$(dirname "$src")")
+    local tree=$FC_DIR/tree-$name; rm -rf "$tree"
+    mkdir -p "$tree/prompt-lab-deployed/$engine/$name" "$tree/prompt-lab"
+    cp -a "$src/." "$tree/prompt-lab-deployed/$engine/$name/"
+    chown -R 1000:1000 "$tree"
+    rm -f "$FC_DIR/$name.data.ext4"; truncate -s "${DATA_SIZE:-64M}" "$FC_DIR/$name.data.ext4"
+    mkfs.ext4 -q -F -L data -d "$tree" "$FC_DIR/$name.data.ext4"
+    rm -rf "$tree"
+    echo "$name: data disk from $src ($(du -sh "$FC_DIR/$name.data.ext4" | cut -f1) used of ${DATA_SIZE:-64M})"
+}
+
+cmd_up() {
+    local name=${1:?name} port=${2:-9080}
+    [ -x "$bin" ] && [ -f "$kernel" ] || die "no firecracker or kernel under $FC_DIR"
+    [ -f "$FC_DIR/hosted.ext4" ] || die "no $FC_DIR/hosted.ext4"
+    [ -f "$FC_DIR/$name.data.ext4" ] || cmd_disk "$name"
+    [ -r /dev/kvm ] || die "/dev/kvm not accessible"
+    local slot; slot=$(slot_of "$name")
+    local tap; tap=$(net_up "$name" "$port")
+    local vmdir=$FC_DIR/vm/$name; mkdir -p "$vmdir"
+    # its own copy of the root disk (sparse), the data disk as is, the kernel
+    cp --sparse=always "$FC_DIR/hosted.ext4" "$vmdir/rootfs.ext4"
+    ln -sfn "$FC_DIR/$name.data.ext4" "$vmdir/data.ext4"
+    ln -sfn "$kernel" "$vmdir/vmlinux"
+    local s=$run/$name.sock; rm -f "$s"
+    echo "$port" > "$run/$name.port"
+    # exec in the subshell, so $! is firecracker's own pid
+    (cd "$vmdir" && exec "$bin" --api-sock "$s" --id "$name" </dev/null >"$run/$name.console" 2>&1) &
+    echo $! > "$run/$name.pid"
+    wait_sock "$s"
+    local t0; t0=$(now)
+    local args="console=ttyS0 reboot=k panic=1 pci=off rw ip=$(guest_ip "$slot")::$(tap_ip "$slot"):255.255.255.252:$name:eth0:off hosted.gate=$GATE_URL hosted.lab=$LAB hosted.lock=$LOCK"
+    expect 204 "$s" PUT /machine-config "{\"vcpu_count\": $VCPUS, \"mem_size_mib\": $MEM_MIB}"
+    expect 204 "$s" PUT /boot-source   "{\"kernel_image_path\": \"vmlinux\", \"boot_args\": \"$args\"}"
+    expect 204 "$s" PUT /drives/rootfs "{\"drive_id\": \"rootfs\", \"path_on_host\": \"rootfs.ext4\", \"is_root_device\": true, \"is_read_only\": false}"
+    expect 204 "$s" PUT /drives/data   "{\"drive_id\": \"data\", \"path_on_host\": \"data.ext4\", \"is_root_device\": false, \"is_read_only\": false}"
+    expect 204 "$s" PUT /network-interfaces/eth0 "{\"iface_id\": \"eth0\", \"guest_mac\": \"06:00:AC:10:$(printf '%02X' "$slot"):02\", \"host_dev_name\": \"$tap\"}"
+    expect 204 "$s" PUT /actions "{\"action_type\": \"InstanceStart\"}"
+    echo "$name: vm started (pid $(cat "$run/$name.pid"), $VCPUS vcpu, $MEM_MIB MiB, tap $tap, guest $(guest_ip "$slot"), published :$port)"
+    for _ in $(seq 1 600); do
+        if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://$(guest_ip "$slot"):$GUEST_PORT/lisply/ping-lisp")" = 200 ]; then
+            echo "$name: lisply ping after $(since "$t0") s"; break
+        fi
+        sleep 0.5
+    done
+    for _ in $(seq 1 600); do
+        if grep -q 'hosted-init\] hosted runtime up' "$run/$name.console" 2>/dev/null; then
+            echo "$name: hosted runtime up after $(since "$t0") s"; grep 'hosted-init\]' "$run/$name.console" | tail -1; return
+        fi
+        if grep -q 'the service exited' "$run/$name.console" 2>/dev/null; then die "the guest's service exited; read $run/$name.console"; fi
+        sleep 0.5
+    done
+    die "no hosted runtime after 300 s; read $run/$name.console"
+}
+
+cmd_down() {
+    local name=${1:?name}
+    local port; port=$(cat "$run/$name.port" 2>/dev/null || echo 9080)
+    if [ -f "$run/$name.pid" ]; then
+        kill -TERM "$(cat "$run/$name.pid")" 2>/dev/null || true
+        rm -f "$run/$name.pid" "$run/$name.sock"
+    fi
+    # and any firecracker of that name a lost pid file left behind
+    pkill -TERM -f -- "--id $name\$" 2>/dev/null || true
+    net_down "$name" "$port"
+    rm -f "$FC_DIR/vm/$name/rootfs.ext4"
+    echo "$name: down"
+}
+
+cmd_status() {
+    printf '%-16s %8s %10s %10s %6s %s\n' vm pid 'RSS MiB' 'PSS MiB' port ping
+    local f
+    for f in "$run"/*.pid; do
+        [ -f "$f" ] || continue
+        local p id slot port ping; p=$(cat "$f"); id=$(basename "$f" .pid); slot=$(slot_of "$id")
+        port=$(cat "$run/$id.port" 2>/dev/null || echo -)
+        kill -0 "$p" 2>/dev/null || { echo "$id: not running"; continue; }
+        # the deployment's own door (302 to its instance) says the runtime is up, not only the Lisp
+        ping=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://$(guest_ip "$slot"):$GUEST_PORT/prompt-lab/d/$id" || echo -)
+        awk -v id="$id" -v pid="$p" -v port="$port" -v ping="$ping" '
+            /^Rss:/ {rss+=$2} /^Pss:/ {pss+=$2}
+            END {printf "%-16s %8s %10.0f %10.0f %6s %s\n", id, pid, rss/1024, pss/1024, port, ping}' "/proc/$p/smaps_rollup"
+    done
+}
+
+# The lifetime rule: the VM runs while the gate says the deployment's
+# hosting is not stopped; stopped (stopped_since set) it is taken down,
+# and brought back when hosting is added.
+cmd_watch() {
+    local name=${1:?name} port=${2:-9080} interval=${WATCH_INTERVAL:-15}
+    while :; do
+        local answer stopped
+        answer=$(curl -s --max-time 5 -X POST -H 'Content-Type: application/json' \
+                      -d "{\"lab\": \"$LAB\", \"deployment\": \"$name\"}" "$GATE_URL/host-balance" || true)
+        stopped=$(printf '%s' "$answer" | jq -r '.stopped // empty' 2>/dev/null || true)
+        if [ "$stopped" = true ]; then
+            if [ -f "$run/$name.pid" ] && kill -0 "$(cat "$run/$name.pid")" 2>/dev/null; then
+                echo "$(date -u +%FT%TZ) $name: hosting stopped at the gate since $(printf '%s' "$answer" | jq -r .stopped_since); taking the VM down"
+                cmd_down "$name"
+            fi
+        elif [ -n "$answer" ]; then
+            if ! { [ -f "$run/$name.pid" ] && kill -0 "$(cat "$run/$name.pid")" 2>/dev/null; }; then
+                echo "$(date -u +%FT%TZ) $name: hosting runs (credits $(printf '%s' "$answer" | jq -r .credits), free left $(printf '%s' "$answer" | jq -r .free_left)); bringing the VM up"
+                cmd_up "$name" "$port"
+            fi
+        fi
+        sleep "$interval"
+    done
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+    disk|up|down|status|watch) "cmd_$cmd" "$@" ;;
+    *) sed -n '2,23p' "$0"; exit 1 ;;
+esac

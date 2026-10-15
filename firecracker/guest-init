@@ -1,11 +1,8 @@
 #!/bin/bash
-# PID 1 inside a Phase 0 microVM.  The rootfs is a docker export of a
-# genworks/gendl or genworks/gdl image: no init system, so this script
-# does the little a Lisp service needs and then starts the image's own
-# entrypoint (/etc/rc.local) as the image's user.
-#
-# Installed by `phase0 rootfs` as /sbin/init; /etc/phase0.env (also
-# written there) names the user and the HTTP port.
+# PID 1 inside a hosted microVM (the Phase 0 guest-init plus a data
+# disk).  The rootfs is a docker export of a genworks/gendl image with
+# the hosted runtime at /opt/hosted; /dev/vdb, when the hangar attaches
+# one, is the deployment's own disk and mounts at /data.
 
 mnt() { mountpoint -q "$2" || mount -t "$1" "$1" "$2" "${@:3}"; }
 mnt proc /proc
@@ -18,16 +15,20 @@ mnt tmpfs /tmp
 mnt tmpfs /run
 mnt cgroup2 /sys/fs/cgroup 2>/dev/null
 
-hostname "$(cat /etc/hostname 2>/dev/null || echo phase0)"
-# The kernel configured eth0 from the ip= boot argument; lo is ours.
+hostname "$(cat /etc/hostname 2>/dev/null || echo hosted)"
 command -v ip >/dev/null && ip link set lo up
 
 . /etc/phase0.env            # GUEST_USER, HTTP_PORT
 
-echo "phase0: $(hostname) up, $(nproc) cpu, $(awk '/MemTotal/{print $2}' /proc/meminfo) kB; starting services as $GUEST_USER on :$HTTP_PORT"
+# The deployment's disk: its record and model file, its grants and
+# purses, kept across the VM's restarts and owned by the service's user.
+if [ -b /dev/vdb ]; then
+    mkdir -p /data
+    mount /dev/vdb /data && chown -R "$GUEST_USER" /data && echo "hosted: /data mounted from /dev/vdb"
+fi
 
-# A shell on the serial console when asked for (boot arg phase0.shell),
-# for looking around from `phase0 boot -f`.
+echo "hosted: $(hostname) up, $(nproc) cpu, $(awk '/MemTotal/{print $2}' /proc/meminfo) kB; starting services as $GUEST_USER on :$HTTP_PORT"
+
 if grep -q phase0.shell /proc/cmdline; then
     setsid bash -c 'exec bash </dev/ttyS0 >/dev/ttyS0 2>&1' &
 fi
@@ -35,15 +36,17 @@ fi
 export HOME=/home/$GUEST_USER USER=$GUEST_USER LOGNAME=$GUEST_USER
 export HTTP_PORT START_HTTP=true START_HTTPS=false START_SWANK=false START_TELNET=false
 cd "$HOME" || cd /
-setpriv --reuid="$GUEST_USER" --regid="$GUEST_USER" --init-groups /etc/rc.local &
+# The image's Lisp reads a REPL on stdin and quits at end-of-file (a
+# container keeps a tty open for it); a pipe nobody writes holds it.
+mkfifo /run/stdin
+sleep infinity > /run/stdin &
+setpriv --reuid="$GUEST_USER" --regid="$GUEST_USER" --init-groups /etc/rc.local < /run/stdin &
 service=$!
 
-# PID 1 must never exit (the kernel panics, and panic=1 reboots).
-# Reap what comes back, and if the service itself dies say so and idle.
 while :; do
     wait -n 2>/dev/null
     if ! kill -0 $service 2>/dev/null; then
-        echo "phase0: the service exited; idling.  (poweroff: echo o > /proc/sysrq-trigger)"
+        echo "hosted: the service exited; idling.  (poweroff: echo o > /proc/sysrq-trigger)"
         exec sleep infinity
     fi
 done

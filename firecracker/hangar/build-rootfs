@@ -1,0 +1,31 @@
+#!/bin/bash
+# Build the hosted rootfs: the exported gendl image + /opt/hosted (demos,
+# monocle) + the hosted init, as an ext4 image.  Runs INSIDE a debian
+# container with /work (FC_DIR), /hangar (this kit) and /hosted (the
+# source trees) mounted.  Usage: build-rootfs.sh NAME SIZE
+set -euo pipefail
+NAME=${1:?name}; SIZE=${2:-4G}
+apt-get -qq update >/dev/null && apt-get -qq install -y e2fsprogs >/dev/null
+t=/work/tree
+rm -rf $t && mkdir $t && tar -C $t -xf /work/gendl.tar
+if   [ -d $t/opt/gendl ];        then user=gendl-user; port=9080
+elif [ -d $t/opt/genworks-gdl ]; then user=gdl-user;   port=9088
+else echo "not a gendl or gdl image" >&2; exit 1; fi
+install -m 755 /hangar/guest-init $t/sbin/init
+printf "GUEST_USER=%s\nHTTP_PORT=%s\n" $user $port > $t/etc/phase0.env
+echo "$NAME" > $t/etc/hostname
+printf "nameserver 1.1.1.1\n" > $t/etc/resolv.conf
+# the hosted runtime, owned by the service's user
+mkdir -p $t/opt/hosted
+cp -a /hosted/demos /hosted/monocle $t/opt/hosted/
+uid=$(stat -c %u $t/home/$user); gid=$(stat -c %g $t/home/$user)
+chown -R $uid:$gid $t/opt/hosted
+install -m 644 -o $uid -g $gid /hangar/hosted-services-init.cl $t/home/$user/gdl-services-init.cl
+mkdir -p $t/data
+chroot $t sh -c "apt-get -qq update >/dev/null && apt-get -qq install -y --no-install-recommends iproute2 procps >/dev/null && apt-get clean" \
+    || echo "  (iproute2 not installed in the guest)"
+rm -f /work/$NAME.ext4 && truncate -s $SIZE /work/$NAME.ext4
+mkfs.ext4 -q -F -L $NAME -d $t /work/$NAME.ext4
+rm -rf $t
+echo "  user=$user port=$port"
+ls -lsh /work/$NAME.ext4
