@@ -656,10 +656,19 @@ start_services() {
     # every hand, minted names the muster already announced) rides in a
     # log and surfaces only on failure; the gangway watch below reports
     # the raise in its own words.
+    mkdir -p "${SCRIPT_DIR}/generated"
+    # The chart locker (generated/corpora, stowed aboard the console at
+    # /lisply/corpora) must exist on the dockside before the vat runs, or
+    # docker grows it as root.  A NEW ship clears the species corpora
+    # first: what the last complement lodged is not evidence of who is
+    # aboard now.  Mount corpora are rebuilt below and overwrite in place.
+    mkdir -p "${SCRIPT_DIR}/generated/corpora"
+    if [ -z "$_ss_services" ]; then
+        rm -f "${SCRIPT_DIR}/generated/corpora/species-"*.sexp 2>/dev/null || true
+    fi
     # shellcheck disable=SC2086  (word-split intentional: service names)
     check_berths $_ss_services
 
-    mkdir -p "${SCRIPT_DIR}/generated"
     _ss_up_log="${SCRIPT_DIR}/generated/last-raise.log"
     # shellcheck disable=SC2086  (word-split intentional: service names)
     if ! run_compose up -d --remove-orphans $_ss_services >"$_ss_up_log" 2>&1; then
@@ -687,7 +696,106 @@ start_services() {
 
     refresh_emacs_runtime_config
 
+    # The chart locker: the lisply_search corpora the crew brought
+    # aboard, and the ones the ship indexes from its own hold.  After
+    # validation, same as the merge above: it needs live rooms and a
+    # console whose daemon is up to notice the files land.
+    stow_species_corpora
+    index_mount_corpora
+
     return "$_ss_rc"
+}
+
+# =============================================================================
+# THE CHART LOCKER -- the lisply_search corpora aboard (2026-09-14)
+#
+# The contract is lisply-mcp's CORPUS.md: content lives with each
+# project, the format with the protocol that promises the tool.  A
+# species image carries its own corpus file and names it with the OCI
+# label `lisply.corpus'; the console loads its baked index plus every
+# *.sexp in the directory the yard stows at /lisply/corpora
+# (generated/corpora on the dockside), a corpus there outranking a
+# same-named baked source -- so the Gendl searched is the Gendl flying.
+# Only the index travels: a corpus file is self-contained (snippets and
+# terms pre-extracted), so the yard copies one file per species out of
+# the room, never the source, and never starts anything to do it.
+#
+# Two tiers land in the locker:
+#   species-<room>-<file>   copied out of a room whose species carries
+#                           the label (stow_species_corpora)
+#   mount-<name>.sexp       built aboard the console from /projects by
+#                           the reference indexer, for each corpus the
+#                           articles declare under :chart-locker
+#                           (generated/*chart-locker.tsv, drawn by the
+#                           generator; index_mount_corpora)
+# =============================================================================
+stow_species_corpora() {
+    _ssc_dir="${SCRIPT_DIR}/generated/corpora"
+    mkdir -p "$_ssc_dir"
+    _ssc_ids="$(run_compose ps -q 2>/dev/null)"
+    [ -z "$_ssc_ids" ] && return 0
+    _ssc_n=0
+    for _ssc_id in $_ssc_ids; do
+        _ssc_paths="$(docker inspect --format '{{index .Config.Labels "lisply.corpus"}}' "$_ssc_id" 2>/dev/null)"
+        [ -z "$_ssc_paths" ] && continue
+        _ssc_module="$(docker inspect --format '{{index .Config.Labels "basilisk.module"}}' "$_ssc_id" 2>/dev/null)"
+        _ssc_name="$(docker inspect --format '{{.Name}}' "$_ssc_id" 2>/dev/null)"
+        _ssc_name="${_ssc_name#/}"
+        for _ssc_p in $_ssc_paths; do
+            _ssc_out="${_ssc_dir}/species-${_ssc_module:-$_ssc_name}-$(basename "$_ssc_p")"
+            if docker cp "${_ssc_id}:${_ssc_p}" "${_ssc_out}.tmp" >/dev/null 2>&1; then
+                mv -f "${_ssc_out}.tmp" "$_ssc_out"
+                _ssc_n=$((_ssc_n + 1))
+                # shellcheck disable=SC2059
+                log_info "  $(printf "${BASILISK_VOCAB_LOCKER_LODGED:-chart locker: %s lodges %s}" "$(_crew_display "$_ssc_name")" "$(basename "$_ssc_out")")"
+            else
+                rm -f "${_ssc_out}.tmp"
+                log_warning "  search corpora: could not copy ${_ssc_p} out of ${_ssc_name}"
+            fi
+        done
+    done
+    if [ "$_ssc_n" -eq 0 ]; then
+        log_info "  ${BASILISK_VOCAB_LOCKER_EMPTY:-chart locker: no species aboard carries a corpus, lisply.corpus label; the console searches what it was built with}"
+    fi
+}
+
+index_mount_corpora() {
+    _imc_files="$(ls "${SCRIPT_DIR}/generated/"*chart-locker.tsv 2>/dev/null)"
+    [ -z "$_imc_files" ] && return 0
+    _imc_cap="$(room_container "$(captain_room)")"
+    if [ -z "$_imc_cap" ]; then
+        log_warning "search corpora: no console running to index the configured corpora"
+        return 0
+    fi
+    if docker exec "$_imc_cap" test -x /usr/local/bin/lisply-index >/dev/null 2>&1; then
+        _imc_tool="lisply-index"
+    elif docker exec "$_imc_cap" test -f /home/emacs-user/lisply-mcp/scripts/lisply-index.js >/dev/null 2>&1; then
+        _imc_tool="node /home/emacs-user/lisply-mcp/scripts/lisply-index.js"
+    else
+        log_warning "search corpora: the console image has no lisply-index (built before 2026-09-14); the configured corpora are not indexed"
+        return 0
+    fi
+    _imc_tab="$(printf '\t')"
+    # shellcheck disable=SC2086  (word-split intentional: file list)
+    cat $_imc_files | grep -v '^#' | while IFS="$_imc_tab" read -r _imc_name _imc_root _imc_subdirs _imc_dist; do
+        [ -z "$_imc_name" ] && continue
+        if ! docker exec "$_imc_cap" test -d "$_imc_root" >/dev/null 2>&1; then
+            log_info "  search corpora: ${_imc_name} -- ${_imc_root} is not in the console; not indexed"
+            continue
+        fi
+        _imc_sub=""
+        [ -n "$_imc_subdirs" ] && _imc_sub="--subdirs ${_imc_subdirs}"
+        # Detached: a corpus takes seconds to a minute, and the console's
+        # daemon picks the file up by its modification time when it lands.
+        if docker exec -d "$_imc_cap" ${_imc_tool} --root "${_imc_root}" --name "${_imc_name}" \
+               --distribution "${_imc_dist:-public}" ${_imc_sub} \
+               --out "/lisply/corpora/mount-${_imc_name}.sexp" --quiet; then
+            # shellcheck disable=SC2059
+            log_info "  $(printf "${BASILISK_VOCAB_LOCKER_INDEXING:-chart locker: indexing %s from %s, in the background}" "$_imc_name" "$_imc_root")"
+        else
+            log_warning "  search corpora: could not start the indexer for ${_imc_name}"
+        fi
+    done
 }
 
 # =============================================================================
@@ -2308,7 +2416,13 @@ refresh_emacs_runtime_config() {
     _rerc_cap="$(room_container "$_rerc_room")"
     # shellcheck disable=SC2059
     [ -n "$_rerc_cap" ] || { log_warning "$(printf "${BASILISK_VOCAB_NO_KEEPER_REFRESH:-no keeper for the %s; skipping Emacs service refresh}" "$_rerc_room")"; return 0; }
-    _refresh_result="$(docker exec "$_rerc_cap" emacsclient --eval \
+    # BOUNDED: emacsclient blocks until the daemon answers, and a daemon
+    # still loading its init on a small host (2 vCPUs, 2026-09-04)
+    # answers minutes later or never -- which hung every startup at this
+    # step, after the deployment was already running.  A timeout turns
+    # that into the "still initializing" branch below; the refresh
+    # re-arms itself from the daemon's side once it is up.
+    _refresh_result="$(timeout "${BASILISK_EMACS_REFRESH_TIMEOUT:-20}" docker exec "$_rerc_cap" emacsclient --eval \
         "(progn
             (defvar skewed-runtime-services-refresh-armed nil)
             (defvar skewed-runtime-services-refresh-done nil)

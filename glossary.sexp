@@ -37,6 +37,7 @@
   :host               :galaxy
   :hostname           :module
   :registry-namespace :provenance
+  :search-corpora     :chart-locker
   :image-variant      :strain
   :image              :species
   ;; The role system.  Substitution is position-blind, so these carry
@@ -77,6 +78,11 @@
   ;; Emacs (the upstream words are rmax/grmax).
   :hail-term "rmacs"
   :hail-gui  "grmacs"
+  ;; Startup's report on the console's search corpora (the upstream
+  ;; words are "chart locker").
+  :locker-lodged   "search corpora: %s provides %s"
+  :locker-empty    "search corpora: no engine image carries a corpus (lisply.corpus label); the console searches its built-in index"
+  :locker-indexing "search corpora: indexing %s from %s, in the background"
 
   ;; Deployment naming (generate-env.sh)
   :ship-minted "Generated deployment name: %s (recorded in %s)"

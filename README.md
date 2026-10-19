@@ -181,6 +181,15 @@ Once a client is connected,
 [`mcp/opening-prompt.md`](mcp/opening-prompt.md) is a suitable
 ready-made first message.
 
+**Requiring a shared secret.** Put a secret in `.secrets/lisply-secret`
+in the projects directory (beside `basalt/`, mode 600) before
+`./basalt up`, and the engines and the console answer their Lisply
+endpoints only to a client that sends it; every MCP launcher this
+deployment writes sends it, and a changed secret takes effect on the
+next request, with no restart. Without the file the endpoints are open
+as before, which is safe only while no service's port is reachable
+beyond your own machine.
+
 
 ## The configuration, and the generated files
 

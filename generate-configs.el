@@ -88,6 +88,19 @@ foreign overlay fails loudly rather than quietly composing.")
 ;;; Docker Compose Generation
 ;;; ============================================================================
 
+(defconst skewed--lisply-secret-container-path "/projects/.secrets/lisply-secret"
+  "Where every room sees the lisply secret (the galaxy's projects dir is
+mounted at /projects in each).")
+
+(defun skewed--lisply-secret-present-p ()
+  "True when the galaxy holds a non-empty .secrets/lisply-secret: the
+projects dir is PROJECTS_DIR, else the parent of this yard."
+  (let* ((projects (or (let ((p (getenv "PROJECTS_DIR"))) (and p (> (length p) 0) p))
+                       (file-name-directory (directory-file-name skewed-gen-yard-dir))))
+         (file (expand-file-name ".secrets/lisply-secret" projects)))
+    (and (file-readable-p file)
+         (> (or (file-attribute-size (file-attributes file)) 0) 0))))
+
 (defun skewed--generate-compose-yaml (config)
   "Generate docker-compose.yml content from CONFIG."
   (let* ((defaults (skewed--get-prop config :defaults))
@@ -275,15 +288,25 @@ foreign overlay fails loudly rather than quietly composing.")
         (when network-mode
           (push (format "    network_mode: %s" network-mode) lines))
         
-        ;; Ports
+        ;; Ports.  A DEVIATION on a base room (an overlay entry with no
+        ;; species of its own) that restates :hailing-frequencies means
+        ;; them as the WHOLE list: compose merges `ports' across files by
+        ;; appending, so the base's galaxy-side publishes would otherwise
+        ;; stay open.  `!override' replaces the list, `!reset' empties it
+        ;; (compose 2.24+).  A public hull that opens only its Chief
+        ;; depends on this (suzie, 2026-09-08).
         (unless network-mode
-          (let ((ports-with-host (cl-remove-if-not (lambda (p) (skewed--get-prop p :galaxy)) ports)))
-            (when ports-with-host
-              (push "    ports:" lines)
+          (let ((ports-with-host (cl-remove-if-not (lambda (p) (skewed--get-prop p :galaxy)) ports))
+                (deviation? (and (null image) ports)))
+            (cond
+             ((and deviation? (null ports-with-host))
+              (push "    ports: !reset" lines))
+             (ports-with-host
+              (push (if deviation? "    ports: !override" "    ports:") lines)
               (dolist (port ports-with-host)
                 (let ((container (skewed--get-prop port :aboard))
                       (host (skewed--get-prop port :galaxy)))
-                  (push (format "      - \"%s:%s\"" host container) lines))))))
+                  (push (format "      - \"%s:%s\"" host container) lines)))))))
         
         ;; Environment
         (push "    environment:" lines)
@@ -311,6 +334,15 @@ foreign overlay fails loudly rather than quietly composing.")
                                                   (format "%s" (cdr env-pair))))
                 lines))
         (push (format "      - TZ=%s" (or (skewed--get-prop defaults :timezone) "${TZ:-Etc/UTC}")) lines)
+        ;; The lisply doors' shared secret (2026-10-19).  When the galaxy
+        ;; holds .secrets/lisply-secret, every room is told where it lies:
+        ;; a Gendl room then answers its /lisply endpoints only to a
+        ;; caller carrying it (gendl gwl/lisply-backend), and mcp-exec
+        ;; hands the same file to every wrapper.  No file, no variable --
+        ;; a named file that cannot be read keeps the doors CLOSED, so the
+        ;; variable is never emitted ahead of the secret it names.
+        (when (skewed--lisply-secret-present-p)
+          (push (format "      - GENDL_LISPLY_SECRET_FILE=%s" skewed--lisply-secret-container-path) lines))
 
         ;; env_file (long-form, required:false) -- lets a service read
         ;; secrets from an uncommitted per-host file without breaking
@@ -331,9 +363,16 @@ foreign overlay fails loudly rather than quietly composing.")
         ;; museum chamber -- an airgap alone does not refuse a mount).
         (let ((default-vols (unless (skewed--get-prop svc :no-default-cargo?)
                               (skewed--get-prop defaults :cargo-bays)))
-              (svc-vols vols))
-          (when (or default-vols svc-vols)
-            (push "    volumes:" lines))
+              (svc-vols vols)
+              ;; A deviation refusing the default cargo refuses the BASE
+              ;; room's bays too: compose merges `volumes' by appending,
+              ;; so only `!override' (or `!reset', for none at all)
+              ;; actually leaves them ashore.
+              (override? (and (null image) (skewed--get-prop svc :no-default-cargo?))))
+          (cond ((and override? (null svc-vols))
+                 (push "    volumes: !reset" lines))
+                ((or default-vols svc-vols)
+                 (push (if override? "    volumes: !override" "    volumes:") lines)))
           (dolist (vol default-vols)
             (let ((src (skewed--get-prop vol :dockside))
                   (tgt (skewed--get-prop vol :stowed-at)))
@@ -425,6 +464,16 @@ foreign overlay fails loudly rather than quietly composing.")
 ;;; MCP Config Generation  
 ;;; ============================================================================
 
+(defun skewed--lisply-secret-wrapper-args ()
+  "Wrapper flags that send the lisply secret, when the galaxy holds one.
+For the configs that start the wrapper directly inside the ready room;
+the host's configs go through mcp-exec, which adds the same flags
+itself.  The ready room's wrapper must know --admin-secret-file: put
+the secret file in place only once the room's image carries it."
+  (and (skewed--lisply-secret-present-p)
+       (list "--admin-secret-file" skewed--lisply-secret-container-path
+             "--admin-secret-header" "X-Lisply-Secret")))
+
 (defun skewed--generate-mcp-json-container (config)
   "Generate MCP config for in-container usage (claude/gemini CLI)."
   (let* ((mcp-config (skewed--get-prop config :mcp))
@@ -447,6 +496,7 @@ foreign overlay fails loudly rather than quietly composing.")
           (when request-timeout
             (setq args (append args (list "--request-timeout-ms"
                                           (number-to-string request-timeout)))))
+          (setq args (append args (skewed--lisply-secret-wrapper-args)))
           (push (cons name `((command . "node")
                              (args . ,(vconcat args))))
                 servers))))
@@ -508,6 +558,7 @@ filters those out and keeps only top-level [mcp_servers.NAME] tables."
             (when request-timeout
               (setq args (append args (list "--request-timeout-ms"
                                             (number-to-string request-timeout)))))
+            (setq args (append args (skewed--lisply-secret-wrapper-args)))
             (push (format "args = [%s]"
                           (mapconcat (lambda (arg) (format "\"%s\"" arg)) args ", "))
                   lines))
@@ -675,8 +726,24 @@ Returns the install script content as a string."
     ;; box still running the stack from a skewed-emacs checkout can say
     ;; BASILISK_DIR=../skewed-emacs ./install without editing this
     ;; GENERATED file -- which is what hand-editing it amounts to, and
-    ;; the edit is lost on the next regeneration.
-    (push "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"" lines)
+    ;; the edit is lost on the next regeneration.  The search for the
+    ;; yard was hand-patched into every stack's install on 2026-09-16
+    ;; (balaram's first bucketed deploy: `..' through the top-level
+    ;; compat symlink resolves against the real parent, so gs/basilisk
+    ;; was never found) and lost again at the next regeneration
+    ;; (suzie, 2026-09-30); it lives here now.
+    (push "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd -P)\"" lines)
+    (push "# basilisk beside this repo, or one level up when this repo sits in the" lines)
+    (push "# gs/ bucket and basilisk at the top of /projects (or the other way" lines)
+    (push "# round).  Physical paths: reached through a top-level compat symlink," lines)
+    (push "# `..` resolves against the real parent, which is how balaram's first" lines)
+    (push "# bucketed deploy (2026-09-16) looked for gs/basilisk and found nothing." lines)
+    (push "if [ -z \"${BASILISK_DIR:-}\" ]; then" lines)
+    (push "    for d in \"$SCRIPT_DIR/../basilisk\" \"$SCRIPT_DIR/../../basilisk\" \\" lines)
+    (push "             \"$SCRIPT_DIR/../gs/basilisk\" \"$SCRIPT_DIR/../../gs/basilisk\"; do" lines)
+    (push "        [ -d \"$d\" ] && { BASILISK_DIR=\"$(cd \"$d\" && pwd -P)\"; break; }" lines)
+    (push "    done" lines)
+    (push "fi" lines)
     (push "TARGET_DIR=\"${BASILISK_DIR:-$SCRIPT_DIR/../basilisk}\"" lines)
     (push "" lines)
     (push (format "echo \"Installing %s...\"" label) lines)
@@ -753,6 +820,16 @@ Returns the install script content as a string."
       (push (format "    echo \"Installing crew ledger (generated/%screw.env)...\"" prefix) lines)
       (push "    mkdir -p \"$TARGET_DIR/generated\"" lines)
       (push (format "    cp \"$SCRIPT_DIR/generated/%screw.env\" \"$TARGET_DIR/generated/%screw.env\""
+                    prefix prefix)
+            lines)
+      (push "fi" lines)
+      (push "" lines)
+      ;; The chart locker's manifest rides in beside the ledger, under
+      ;; its prefixed name for the same reason.
+      (push (format "if [ -f \"$SCRIPT_DIR/generated/%schart-locker.tsv\" ]; then" prefix) lines)
+      (push (format "    echo \"Installing the chart locker manifest (generated/%schart-locker.tsv)...\"" prefix) lines)
+      (push "    mkdir -p \"$TARGET_DIR/generated\"" lines)
+      (push (format "    cp \"$SCRIPT_DIR/generated/%schart-locker.tsv\" \"$TARGET_DIR/generated/%schart-locker.tsv\""
                     prefix prefix)
             lines)
       (push "fi" lines)
@@ -1049,6 +1126,28 @@ keys on the repo half and broad tag features."
           (push (format "BASILISK_MOD_%s_NAME=%s" san name) lines)
           (push (format "BASILISK_MOD_%s_SPECIES=%s" san image) lines))))
     (mapconcat #'identity (nreverse lines) "\n")))
+
+(defun skewed--generate-chart-locker (config)
+  "The mount-corpora manifest for compose-dev's index_mount_corpora.
+CONFIG's :chart-locker lists the lisply_search corpora the ship indexes
+itself from its hold at raise (lisply-mcp CORPUS.md): each entry
+(:corpus NAME :root DIR :subdirs (D ...) :distribution :public|:internal).
+One tab-separated line per corpus; nil when the articles declare none."
+  (let ((entries (skewed--get-prop config :chart-locker))
+        (lines '()))
+    (when entries
+      (push (format "# DO NOT EDIT - Generated from %s :chart-locker" skewed-gen-articles-filename) lines)
+      (push "# The mount corpora: what the ship indexes itself from its hold at raise." lines)
+      (push "# name<TAB>root<TAB>subdirs (comma-separated, may be empty)<TAB>distribution" lines)
+      (push "# Consumed by compose-dev's index_mount_corpora, after validation." lines)
+      (dolist (e entries)
+        (push (format "%s\t%s\t%s\t%s"
+                      (plist-get e :corpus)
+                      (plist-get e :root)
+                      (mapconcat #'identity (plist-get e :subdirs) ",")
+                      (substring (symbol-name (or (plist-get e :distribution) :public)) 1))
+              lines))
+      (concat (string-join (nreverse lines) "\n") "\n"))))
 
 (defun skewed--generate-vocabulary-env (glossary)
   "KEY='VALUE' lines for the shell half of a FORK's dictionary.
@@ -1513,6 +1612,18 @@ Examples:
                     "\n"))
           (message "Generated: %s" crew-env))))
     
+    ;; The chart locker's manifest: the mount corpora this ship (base or
+    ;; overlay) indexes from its hold at raise.  Lands in generated/;
+    ;; an overlay's install carries it into the yard like the ledger.
+    (let ((manifest (skewed--generate-chart-locker config)))
+      (when manifest
+        (let ((locker-file (expand-file-name
+                            (format "generated/%schart-locker.tsv" skewed-gen-output-prefix)
+                            skewed-gen-output-dir)))
+          (make-directory (file-name-directory locker-file) t)
+          (with-temp-file locker-file (insert manifest))
+          (message "Generated: %s" locker-file))))
+
     ;; Generate MCP configs (only when services declare :mcp t)
     (when (skewed--has-mcp-services-p config)
       (make-directory mcp-dir t)

@@ -65,6 +65,17 @@
  (:wrapper-path-container "/home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js"
   :request-timeout-ms 30000)
 
+ ;; SEARCH CORPORA this deployment indexes itself from the projects
+ ;; directory, for the console's lisply_search -- beside the corpora
+ ;; the engine images carry in their own images (the lisply.corpus
+ ;; label).  Each entry: (:corpus NAME :root DIR-IN-CONTAINER :subdirs
+ ;; (D ...) :distribution :public|:internal); startup draws
+ ;; generated/chart-locker.tsv (the upstream file name) from it and
+ ;; indexes each one.  None by
+ ;; default: a stack repository names what its projects directory
+ ;; holds.  Contract: lisply-mcp CORPUS.md.
+ :search-corpora ()
+
  ;; ROLE QUALIFICATIONS: what an image must be capable of to fill each
  ;; role.  Requirements only -- deliberately NOT a service catalogue.
  ;; An image states its CAPABILITIES in its own manifest (the
@@ -138,6 +149,8 @@
                  ("WEBTERM_PORT" . "6942")
                  ("TERM" . "xterm-256color")
                  ("COLORTERM" . "truecolor")
+                 ;; where the search corpora are mounted (below)
+                 ("LISPLY_SEARCH_CORPORA" . "/lisply/corpora")
                  ;; The console flies the deployment's own marquee
                  ;; (dot-files/console-banner.txt) rather than the
                  ;; image's built-in guises; honored by the dashboard
@@ -145,8 +158,15 @@
                  ("SKEWED_DASHBOARD_BANNER_FILE" . "/projects/basalt/dot-files/console-banner.txt")
                  ("SKEWED_DASHBOARD_BANNER_TITLE" . "Ready when you are.")
                  ("SKEWED_DASHBOARD_FOOTER" . "Brought to you by 𝙶𝚎𝚗𝚠𝚘𝚛𝚔𝚜 𝙸𝚗𝚝𝚎𝚛𝚗𝚊𝚝𝚒𝚘𝚗𝚊𝚕"))
-   ;; The console's credentials and local config, mounted from the host.
-   :volumes ((:source "${USER_HOME}/.claude/.credentials.json"
+   ;; The search corpora (generated/corpora), refreshed at every startup
+   ;; from the engine images' own corpora and the :search-corpora above;
+   ;; the console merges them over its built-in index, a corpus here
+   ;; replacing a same-named built-in one, so the Gendl searched is the
+   ;; Gendl running.  Then the console's credentials and local config,
+   ;; mounted from the host.
+   :volumes ((:source "${PROJECTS_DIR}/basalt/generated/corpora"
+              :target "/lisply/corpora" :mode "rw")
+             (:source "${USER_HOME}/.claude/.credentials.json"
               :target "/home/emacs-user/.claude/.credentials.json")
              (:source "${USER_HOME}/.gemini/google_accounts.json"
               :target "/home/emacs-user/.gemini/google_accounts.json")

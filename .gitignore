@@ -111,6 +111,14 @@ templates/
 generated/cyclops.sexp
 generated/*-services-init.cl
 
+# The search corpora mounted into the console at every startup (copied
+# out of the engine images, and indexed from the projects directory),
+# and a stack repository's manifest naming the ones to index, carried
+# in by its install.  Per-deployment state, never tracked
+# (lisply-mcp CORPUS.md).
+generated/corpora/
+generated/*-chart-locker.tsv
+
 # ==============================================================================
 # Build artifacts & caches
 # ==============================================================================
