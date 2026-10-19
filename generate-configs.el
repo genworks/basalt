@@ -70,6 +70,18 @@ foreign overlay fails loudly rather than quietly composing.")
   "Get property KEY from PLIST."
   (plist-get plist key))
 
+(defun skewed--host-port-only (host)
+  "HOST, a port's host side, without any leading bind address.
+\"127.0.0.1:${X:-19080}\" and \"${BIND:-127.0.0.1}:${X:-19080}\" give
+\"${X:-19080}\"; a bare port comes back as it is.  The ports list takes
+the bind address, but HTTP_HOST_PORT and SWANK_HOST_PORT reach the
+engines, which parse them as integers."
+  (let ((s (format "%s" host)))
+    (if (string-match
+         "\\`\\(?:\\${[^}]*}\\|[0-9.]+\\|\\[[^]]*\\]\\):\\(.+\\)\\'" s)
+        (match-string 1 s)
+      s)))
+
 (defun skewed--has-mcp-services-p (config)
   "Non-nil if CONFIG's crew has anyone with :cyborg-passengers-allowed?."
   (cl-some (lambda (svc) (skewed--get-prop svc :cyborg-passengers-allowed?))
@@ -317,12 +329,12 @@ projects dir is PROJECTS_DIR, else the parent of this yard."
             (when (equal port-name "HTTP")
               (push (format "      - HTTP_PORT=%s" container) lines)
               (when host
-                (push (format "      - HTTP_HOST_PORT=%s" host) lines))
+                (push (format "      - HTTP_HOST_PORT=%s" (skewed--host-port-only host)) lines))
               (push "      - START_HTTP=true" lines))
             (when (equal port-name "SWANK")
               (push (format "      - SWANK_PORT=%s" container) lines)
               (when host
-                (push (format "      - SWANK_HOST_PORT=%s" host) lines))
+                (push (format "      - SWANK_HOST_PORT=%s" (skewed--host-port-only host)) lines))
               (push "      - START_SWANK=true" lines))))
         (dolist (env-pair env)
           ;; Quote the whole NAME=VALUE as a YAML single-quoted scalar.
