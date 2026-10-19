@@ -464,6 +464,16 @@ projects dir is PROJECTS_DIR, else the parent of this yard."
 ;;; MCP Config Generation  
 ;;; ============================================================================
 
+(defun skewed--lisply-secret-wrapper-args ()
+  "Wrapper flags that send the lisply secret, when the galaxy holds one.
+For the configs that start the wrapper directly inside the ready room;
+the host's configs go through mcp-exec, which adds the same flags
+itself.  The ready room's wrapper must know --admin-secret-file: put
+the secret file in place only once the room's image carries it."
+  (and (skewed--lisply-secret-present-p)
+       (list "--admin-secret-file" skewed--lisply-secret-container-path
+             "--admin-secret-header" "X-Lisply-Secret")))
+
 (defun skewed--generate-mcp-json-container (config)
   "Generate MCP config for in-container usage (claude/gemini CLI)."
   (let* ((mcp-config (skewed--get-prop config :mcp))
@@ -486,6 +496,7 @@ projects dir is PROJECTS_DIR, else the parent of this yard."
           (when request-timeout
             (setq args (append args (list "--request-timeout-ms"
                                           (number-to-string request-timeout)))))
+          (setq args (append args (skewed--lisply-secret-wrapper-args)))
           (push (cons name `((command . "node")
                              (args . ,(vconcat args))))
                 servers))))
@@ -547,6 +558,7 @@ filters those out and keeps only top-level [mcp_servers.NAME] tables."
             (when request-timeout
               (setq args (append args (list "--request-timeout-ms"
                                             (number-to-string request-timeout)))))
+            (setq args (append args (skewed--lisply-secret-wrapper-args)))
             (push (format "args = [%s]"
                           (mapconcat (lambda (arg) (format "\"%s\"" arg)) args ", "))
                   lines))
