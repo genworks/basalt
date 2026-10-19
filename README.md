@@ -198,6 +198,14 @@ can be a bit loud & clanky).
 Once a visitor is aboard, [`mcp/opening-prompt.md`](mcp/opening-prompt.md) is a suitable
 ready-made first hail.
 
+**A password at the doors.** Put a passphrase in `.secrets/lisply-secret`
+in the galaxy's projects directory (beside the yard, mode 600) before
+`./basilisk up`, and the Gendl rooms open their doors only to a cyborg
+who speaks it; the greeting hall hands it to every cyborg it admits,
+and a changed passphrase is heard at the next knock, with no raise.
+Without the file the doors stand open as before -- fit only while no
+room's port reaches past your own machine.
+
 
 ## The articles, and the yard's paperwork
 

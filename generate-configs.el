@@ -88,6 +88,19 @@ foreign overlay fails loudly rather than quietly composing.")
 ;;; Docker Compose Generation
 ;;; ============================================================================
 
+(defconst skewed--lisply-secret-container-path "/projects/.secrets/lisply-secret"
+  "Where every room sees the lisply secret (the galaxy's projects dir is
+mounted at /projects in each).")
+
+(defun skewed--lisply-secret-present-p ()
+  "True when the galaxy holds a non-empty .secrets/lisply-secret: the
+projects dir is PROJECTS_DIR, else the parent of this yard."
+  (let* ((projects (or (let ((p (getenv "PROJECTS_DIR"))) (and p (> (length p) 0) p))
+                       (file-name-directory (directory-file-name skewed-gen-yard-dir))))
+         (file (expand-file-name ".secrets/lisply-secret" projects)))
+    (and (file-readable-p file)
+         (> (or (file-attribute-size (file-attributes file)) 0) 0))))
+
 (defun skewed--generate-compose-yaml (config)
   "Generate docker-compose.yml content from CONFIG."
   (let* ((defaults (skewed--get-prop config :defaults))
@@ -321,6 +334,15 @@ foreign overlay fails loudly rather than quietly composing.")
                                                   (format "%s" (cdr env-pair))))
                 lines))
         (push (format "      - TZ=%s" (or (skewed--get-prop defaults :timezone) "${TZ:-Etc/UTC}")) lines)
+        ;; The lisply doors' shared secret (2026-10-19).  When the galaxy
+        ;; holds .secrets/lisply-secret, every room is told where it lies:
+        ;; a Gendl room then answers its /lisply endpoints only to a
+        ;; caller carrying it (gendl gwl/lisply-backend), and mcp-exec
+        ;; hands the same file to every wrapper.  No file, no variable --
+        ;; a named file that cannot be read keeps the doors CLOSED, so the
+        ;; variable is never emitted ahead of the secret it names.
+        (when (skewed--lisply-secret-present-p)
+          (push (format "      - GENDL_LISPLY_SECRET_FILE=%s" skewed--lisply-secret-container-path) lines))
 
         ;; env_file (long-form, required:false) -- lets a service read
         ;; secrets from an uncommitted per-host file without breaking

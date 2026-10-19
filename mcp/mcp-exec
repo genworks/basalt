@@ -257,6 +257,25 @@ if ! is_service_running; then
     log "Service ${SERVICE_NAME} is ready"
 fi
 
+# The lisply doors' shared secret (2026-10-19).  When the galaxy holds
+# .secrets/lisply-secret, every wrapper sends it as X-Lisply-Secret,
+# reading the file inside the ready room (again whenever it changes), so
+# the secret never sits on a command line or in the client's config.
+# Gendl rooms are told the same file (GENDL_LISPLY_SECRET_FILE, emitted
+# by generate-configs.el at up).  Passed only when the room's wrapper
+# knows the option: an older wrapper refuses an unknown flag and the
+# server would die at launch.
+_projects_dir="${PROJECTS_DIR:-$(cd "${COMPOSE_DIR}/.." && pwd)}"
+if [ -s "${_projects_dir}/.secrets/lisply-secret" ]; then
+    if compose exec -T "${SERVICE_NAME}" grep -q -- '--admin-secret-file' \
+         /home/emacs-user/lisply-mcp/scripts/mcp-wrapper.js </dev/null >/dev/null 2>&1; then
+        set -- "$@" --admin-secret-file /projects/.secrets/lisply-secret --admin-secret-header X-Lisply-Secret
+        log "lisply secret: the wrapper reads /projects/.secrets/lisply-secret"
+    else
+        log "lisply secret present, but this ready room's wrapper predates --admin-secret-file: not passed"
+    fi
+fi
+
 log "Executing MCP wrapper in service container..."
 
 # Set up cleanup trap - fires when the supervise loop exits (Claude Desktop quit)
