@@ -266,6 +266,39 @@ Writes the result to OUTPUT-FILE and returns it."
         (insert (json-encode config))))
     output-file))
 
+(defun skewed-derive-vscode-configs (host-config-file direct-file ssh-file ssh-host)
+  "Write VS Code's mcp.json forms of HOST-CONFIG-FILE's servers.
+VS Code (GitHub Copilot agent mode) keys its servers under \"servers\",
+not \"mcpServers\", each a stdio entry.  DIRECT-FILE launches each
+server's command as written, for a client on this host; SSH-FILE wraps
+the same command in `ssh -T -o BatchMode=yes SSH-HOST', for VS Code on
+another machine that reaches this one as SSH-HOST (key auth with no
+prompts).  Returns the two files."
+  (let* ((config (with-temp-buffer
+                   (insert-file-contents host-config-file)
+                   (goto-char (point-min))
+                   (json-read)))
+         (direct nil)
+         (ssh nil))
+    (dolist (server (alist-get 'mcpServers config))
+      (let* ((props (cdr server))
+             (command (alist-get 'command props))
+             (args (append (alist-get 'args props) nil)))
+        (push (cons (car server)
+                    `((type . "stdio") (command . ,command) (args . ,(vconcat args))))
+              direct)
+        (push (cons (car server)
+                    `((type . "stdio") (command . "ssh")
+                      (args . ,(vconcat (list "-T" "-o" "BatchMode=yes" ssh-host command)
+                                        args))))
+              ssh)))
+    (let ((json-encoding-pretty-print t))
+      (with-temp-file direct-file
+        (insert (json-encode `((servers . ,(nreverse direct))))))
+      (with-temp-file ssh-file
+        (insert (json-encode `((servers . ,(nreverse ssh)))))))
+    (list direct-file ssh-file)))
+
 (defun skewed-merge-all-mcp-configs (mcp-dir)
   "Merge all MCP config formats from MCP-DIR to /tmp.
 For Windows config, substitutes ${SKEWED_CLONE_PATH} placeholder with
@@ -294,7 +327,16 @@ Returns list of generated files."
     ;; Derive native-host (Linux/macOS) Claude Desktop config
     (skewed-derive-host-config windows-config "/tmp/merged-mcp-host.json")
 
-    (list container-config windows-config toml-config "/tmp/merged-mcp-host.json")))
+    ;; VS Code's forms of the host config (SKEWED_SSH_HOST set by
+    ;; compose-dev; "localhost" is only a placeholder to edit)
+    (skewed-derive-vscode-configs "/tmp/merged-mcp-host.json"
+                                  "/tmp/merged-mcp-vscode.json"
+                                  "/tmp/merged-mcp-vscode-ssh.json"
+                                  (let ((h (getenv "SKEWED_SSH_HOST")))
+                                    (if (and h (not (string-empty-p h))) h "localhost")))
+
+    (list container-config windows-config toml-config "/tmp/merged-mcp-host.json"
+          "/tmp/merged-mcp-vscode.json" "/tmp/merged-mcp-vscode-ssh.json")))
 
 ;; Backwards compatibility wrapper
 (defun skewed-merge-mcp-configs (mcp-dir output-file)

@@ -15,7 +15,25 @@
 # will corrupt the MCP stdio protocol and cause the client to fail.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-COMPOSE_DIR="${SCRIPT_DIR}/.."
+COMPOSE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# THE INSTANCE THIS LAUNCHER SERVES (2026-10-19).  compose-dev gives
+# every instance its own compose project -- the clone's directory name,
+# plus -<instance> -- so a launcher that asked bare `docker compose'
+# found no ready room for a named instance (BASILISK_INSTANCE=alpha),
+# took the ship for down, and raised a NEW one beside it.  The instance
+# is BASILISK_INSTANCE from the environment (set but empty means the
+# bare one), else the instance .env was last generated for.  The port
+# offset and the galaxy are carried the same way, so a raise this
+# launcher starts reproduces the standing instance rather than a bare
+# one at offset 0.
+_env_value() { sed -n "s/^$1=//p" "${COMPOSE_DIR}/.env" 2>/dev/null | head -1; }
+[ -n "${BASILISK_INSTANCE+set}" ] || BASILISK_INSTANCE="$(_env_value BASILISK_INSTANCE)"
+[ -n "${BASILISK_PORT_OFFSET:-}" ] || BASILISK_PORT_OFFSET="$(_env_value BASILISK_PORT_OFFSET)"
+[ -n "${PROJECTS_DIR:-}" ] || PROJECTS_DIR="$(_env_value PROJECTS_DIR)"
+export BASILISK_INSTANCE
+[ -n "$BASILISK_PORT_OFFSET" ] && export BASILISK_PORT_OFFSET
+[ -n "$PROJECTS_DIR" ] && export PROJECTS_DIR
+COMPOSE_PROJECT="$(basename "$COMPOSE_DIR" | tr 'A-Z' 'a-z')${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
 # The Captain's ROOM, not his name: every backend is reached by
 # exec'ing the MCP wrapper inside the ready room, whatever backend
 # --backend-host then names.  Container names are minted per muster
@@ -40,7 +58,7 @@ SERVICE_NAME="${BASILISK_CAPTAIN:-${_ledger_room:-ready-room}}"
 # yard's resolved path, so two clones never share a lock and a moved
 # clone gets a fresh one.
 _yard_key="$(cd "$COMPOSE_DIR" && pwd -P | cksum | cut -d' ' -f1)"
-_yard_key="$(basename "$(cd "$COMPOSE_DIR" && pwd -P)")-${_yard_key}"
+_yard_key="$(basename "$(cd "$COMPOSE_DIR" && pwd -P)")-${_yard_key}${BASILISK_INSTANCE:+-$BASILISK_INSTANCE}"
 LOG_FILE="/tmp/mcp-exec-${_yard_key}.log"
 LOCK_DIR="/tmp/mcp-exec-${_yard_key}.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
@@ -57,9 +75,10 @@ log() {
     echo "[$(date -Iseconds)] [$$] $1" >&2
 }
 
-# Run docker compose commands in the compose directory
+# Run docker compose commands in the compose directory, against this
+# instance's compose project (see THE INSTANCE THIS LAUNCHER SERVES).
 compose() {
-    (cd "$COMPOSE_DIR" && docker compose "$@")
+    (cd "$COMPOSE_DIR" && docker compose -p "$COMPOSE_PROJECT" "$@")
 }
 
 # Check if service is running using docker compose

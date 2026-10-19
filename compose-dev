@@ -1673,6 +1673,7 @@ merge_mcp_configs() {
     # Step 2: Merge inside container -- one shot; the daemon is ready.
     if docker exec "$_mcp_cap" emacsclient --eval \
         "(progn (setenv \"SKEWED_CLONE_PATH\" \"${SCRIPT_DIR}\")
+                (setenv \"SKEWED_SSH_HOST\" \"${MCP_SSH_HOST:-$(hostname)}\")
                 (load-file \"${_mcp_stage}/merge-mcp-configs.el\")
                 (skewed-merge-all-mcp-configs \"${_mcp_stage}\"))" \
         > /dev/null 2>&1
@@ -1698,6 +1699,17 @@ merge_mcp_configs() {
         docker cp "${_mcp_cap}:/tmp/merged-mcp-host.json" \
             "${SCRIPT_DIR}/mcp/claude-code-mcp.json" > /dev/null 2>&1 \
             || log_warning "could not stage mcp/claude-code-mcp.json"
+
+        # VS Code's mcp.json (GitHub Copilot agent mode), same servers:
+        # vscode-mcp.json launches them on this host; vscode-mcp-ssh.json
+        # launches them over `ssh ${MCP_SSH_HOST:-$(hostname)}' for VS
+        # Code on another machine (set MCP_SSH_HOST to the name that
+        # machine uses for this one).
+        docker cp "${_mcp_cap}:/tmp/merged-mcp-vscode.json" \
+            "${SCRIPT_DIR}/mcp/vscode-mcp.json" > /dev/null 2>&1 \
+            && docker cp "${_mcp_cap}:/tmp/merged-mcp-vscode-ssh.json" \
+                "${SCRIPT_DIR}/mcp/vscode-mcp-ssh.json" > /dev/null 2>&1 \
+            || log_warning "could not stage mcp/vscode-mcp.json"
 
         if docker cp "${_mcp_cap}:${_cdc_src}" \
             "${SCRIPT_DIR}/mcp/claude_desktop_config.json" > /dev/null 2>&1; then
